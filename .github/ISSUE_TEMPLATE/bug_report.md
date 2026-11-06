@@ -30,8 +30,8 @@ If you work from a clone of the repository, you can paste the full scan instead 
 it changes nothing). Preset Doctor is not published on npm, so don't use `npx`:
 
 ```
-npm run build
-node packages/core/dist/cli.js scan --json
+npm run build -w @preset-doctor/core
+npm run cli -- scan --json
 ```
 
 > **Before pasting or attaching anything, remove your account id.** That's the long number in

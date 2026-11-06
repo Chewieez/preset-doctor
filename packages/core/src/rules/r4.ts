@@ -3,9 +3,9 @@
  * the file name, and presets without a `.info` sidecar. Only the name mismatch is fixable.
  */
 import { presetName, userInherits } from '../resolve.js';
-import type { Finding, UserPreset } from '../types.js';
+import { RULE_IDS, type Finding, type UserPreset } from '../types.js';
 
-export const R4_ID = 'R4_MALFORMED';
+export const R4_ID = RULE_IDS.malformed;
 
 export interface R4Context {
   /** All presets of the scanned account, to check that a rename can't clash or orphan anyone. */
@@ -63,7 +63,18 @@ export function checkR4(preset: UserPreset, ctx: R4Context): Finding[] {
     findings.push(nameMismatch(preset, name, ctx));
   }
 
-  if (preset.info === undefined) {
+  if (preset.infoError !== undefined) {
+    findings.push({
+      ...base,
+      presetName: name ?? preset.fileStem,
+      severity: 'info',
+      status: 'info',
+      title: 'Sync file (.info) could not be read',
+      explanation:
+        `${preset.infoError}. Another program may be holding it open: close OneDrive or ` +
+        'pause the antivirus scan, then scan again.',
+    });
+  } else if (preset.info === undefined) {
     findings.push({
       ...base,
       presetName: name ?? preset.fileStem,

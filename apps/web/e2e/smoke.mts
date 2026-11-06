@@ -6,7 +6,8 @@
  * showDirectoryPicker is replaced with one that returns a folder in the browser's private
  * storage (OPFS), filled with the broken-r1 fixture. That is a real FileSystemDirectoryHandle,
  * so fsaFs, permissions, createWritable and IndexedDB persistence all run for real. Nothing on
- * disk outside the browser's temp profile is touched. Also writes docs/screenshots/web*.png.
+ * disk outside the browser's temp profile is touched. With --screenshots (as
+ * `npm run screenshots` passes it) it also rewrites docs/screenshots/web*.png.
  *
  * PRESET_DOCTOR_E2E_BROWSER=chrome|msedge picks the browser (default: msedge, then chrome).
  */
@@ -22,6 +23,7 @@ const appDir = join(here, '..');
 const repo = join(appDir, '..', '..');
 const fixture = join(repo, 'packages', 'core', 'src', '__fixtures__', 'broken-r1');
 const shotsDir = join(repo, 'docs', 'screenshots');
+const writeShots = process.argv.includes('--screenshots');
 const COPY = 'PresetDoctor-copy';
 const ORPHAN = 'user/1000000001/filament/Anycubic Petg 06.json';
 
@@ -131,7 +133,7 @@ async function scanDone(page: Page): Promise<void> {
 const step = (msg: string): void => console.log(`- ${msg}`);
 
 const files = await fixtureFiles();
-await mkdir(shotsDir, { recursive: true });
+if (writeShots) await mkdir(shotsDir, { recursive: true });
 const server = await preview({
   root: appDir,
   configFile: join(appDir, 'vite.config.ts'),
@@ -170,8 +172,10 @@ try {
     await page.getAttribute('[data-testid=desktop-app-link]', 'href'),
     'https://github.com/shmehltr/preset-doctor/releases',
   );
-  await page.screenshot({ path: join(shotsDir, 'web.png') });
-  console.log('  screenshot docs/screenshots/web.png');
+  if (writeShots) {
+    await page.screenshot({ path: join(shotsDir, 'web.png') });
+    console.log('  screenshot docs/screenshots/web.png');
+  }
 
   step('Pick the copy, scan');
   await fillCopy(page, files);
@@ -199,7 +203,11 @@ try {
   console.log(`  ${changed.length} files to copy back`);
   assert.ok(changed.includes(ORPHAN.split('/').join('\\')), 'orphan listed for copy-back');
   assert.ok(changed.every((f) => f.startsWith('user\\1000000001\\')));
-  assert.equal(await rowsWith(page, 'hidden').count(), 2, 'no-candidates + low-only stay hidden');
+  assert.equal(
+    await rowsWith(page, 'hidden').count(),
+    3,
+    'no-candidates, low-only and unsure-nozzle stay hidden',
+  );
   assert.match((await readCopy(page, ORPHAN)) ?? '', /"inherits": "Generic PETG @BBL X2D",/);
   const zips = (await listCopy(page, 'preset-doctor-backups')).filter((f) => f.endsWith('.zip'));
   console.log(`  backups: ${zips.join(', ')}`);
@@ -210,8 +218,10 @@ try {
     page.click('[data-testid=download-notice-backup]'),
   ]);
   assert.equal(download.suggestedFilename(), `preset-doctor-backup-${zips[0]}`);
-  await page.screenshot({ path: join(shotsDir, 'web-fixed.png') });
-  console.log('  screenshot docs/screenshots/web-fixed.png');
+  if (writeShots) {
+    await page.screenshot({ path: join(shotsDir, 'web-fixed.png') });
+    console.log('  screenshot docs/screenshots/web-fixed.png');
+  }
 
   step('The folder is remembered after a reload');
   await page.reload();
@@ -219,7 +229,7 @@ try {
   assert.equal(await page.textContent('[data-testid=root-path]'), COPY);
   await page.click('[data-testid=scan-button]');
   await scanDone(page);
-  assert.equal(await rowsWith(page, 'hidden').count(), 2);
+  assert.equal(await rowsWith(page, 'hidden').count(), 3);
 
   step('Restore needs the checkbox too, then puts the presets back');
   await page.click('[data-testid=open-backups]');

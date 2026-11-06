@@ -3,11 +3,13 @@ import {
   bytesEqual,
   decodeText,
   encodeText,
+  errorMessage,
   isNotFound,
   joinPath,
   normalizePath,
   type PresetFs,
 } from './fs.js';
+import { isRecord } from './jsonFile.js';
 
 /**
  * Backups of the whole `user/` folder as one zip per backup, stored in a separate backups folder.
@@ -57,6 +59,16 @@ interface Manifest {
   sourceRoot?: string;
   accounts?: string[];
 }
+
+/** What a manifest read back from a zip says: only the fields that passed validation. */
+type ManifestInfo = Pick<Manifest, 'fileCount'> &
+  Partial<Pick<Manifest, 'createdAt' | 'reason' | 'sourceRoot' | 'accounts'>>;
+
+const REASONS: ReadonlySet<unknown> = new Set<BackupReason>([
+  'before-fix',
+  'before-restore',
+  'manual',
+]);
 
 /** A restore would put a backup into a different folder than the one it was taken from. */
 export class BackupSourceError extends Error {
@@ -147,8 +159,10 @@ export async function createBackup(
 
   const { files, dirs } = await readTree(srcFs, USER_DIR);
   const accounts = [
-    ...new Set([...files.keys(), ...dirs].map((p) => p.split('/')[1]).filter((a) => a)),
-  ].sort() as string[];
+    ...new Set(
+      [...files.keys(), ...dirs].map((p) => p.split('/')[1]).filter((a): a is string => !!a),
+    ),
+  ].sort();
   const manifest: Manifest = {
     app: 'preset-doctor',
     formatVersion: 1,
@@ -183,16 +197,7 @@ export async function createBackup(
     throw new Error(`Backup check failed: ${path} has an unexpected number of files.`);
   }
 
-  const info: BackupInfo = {
-    id,
-    path,
-    fileCount: files.size,
-    bytes: zip.length,
-    createdAt: manifest.createdAt,
-    reason,
-    ...(manifest.sourceRoot !== undefined ? { sourceRoot: manifest.sourceRoot } : {}),
-    accounts,
-  };
+  const info = infoFromManifest(id, path, zip.length, manifest);
   backedUpFiles.set(info, new Set(files.keys()));
   return info;
 }
@@ -212,18 +217,11 @@ export async function listBackups(destFs: PresetFs): Promise<BackupInfo[]> {
     const id = e.name.slice(0, -'.zip'.length);
     if (!isBackupId(id)) continue;
     const bytes = await destFs.readBytes(e.name);
-    const info: BackupInfo = { id, path: e.name, fileCount: 0, bytes: bytes.length };
+    let info: BackupInfo = { id, path: e.name, fileCount: 0, bytes: bytes.length };
     try {
       const manifest = readManifest(bytes);
-      if (manifest) {
-        info.fileCount = manifest.fileCount;
-        info.createdAt = manifest.createdAt;
-        info.reason = manifest.reason;
-        if (typeof manifest.sourceRoot === 'string') info.sourceRoot = manifest.sourceRoot;
-        if (Array.isArray(manifest.accounts)) info.accounts = manifest.accounts;
-      } else {
-        info.fileCount = unzipEntries(bytes).files.size;
-      }
+      if (manifest) info = infoFromManifest(id, e.name, bytes.length, manifest);
+      else info.fileCount = unzipEntries(bytes).files.size;
     } catch {
       // Damaged zip: still listed so the user can see it, with a file count of 0.
     }
@@ -273,7 +271,7 @@ export class RestoreError extends Error {
     cause: unknown,
   ) {
     super(
-      `The restore stopped part-way at ${failedPath} (${(cause as Error | null)?.message ?? String(cause)}). ` +
+      `The restore stopped part-way at ${failedPath} (${errorMessage(cause)}). ` +
         `${restored.length} file(s) were already put back.` +
         (safetyBackup
           ? ` To go back to how it was before this restore, restore backup ${safetyBackup.id}.`
@@ -310,7 +308,7 @@ export async function restoreBackup(
   // Unzip fully before touching anything, so a damaged zip fails without a half-done restore.
   const { files, dirs } = unzipEntries(zip);
 
-  let source: unknown;
+  let source: string | undefined;
   try {
     source = readManifest(zip)?.sourceRoot;
   } catch {
@@ -318,7 +316,7 @@ export async function restoreBackup(
   }
   if (
     options.expectedRoot !== undefined &&
-    typeof source === 'string' &&
+    source !== undefined &&
     !options.allowOtherSource &&
     !sameBackupRoot(source, options.expectedRoot)
   ) {
@@ -335,6 +333,8 @@ export async function restoreBackup(
 
   const restored: string[] = [];
   let at = USER_DIR;
+  // What the file being restored held before (undefined: absent or unreadable).
+  let before: Uint8Array | undefined;
   try {
     for (const d of dirs) {
       at = d;
@@ -342,22 +342,45 @@ export async function restoreBackup(
     }
     for (const [p, data] of files) {
       at = p;
+      before = await tryRead(srcFs, p);
       // Files that already match are skipped: fewer writes, fewer chances to stop part-way.
-      if (await hasBytes(srcFs, p, data)) continue;
+      if (before && bytesEqual(before, data)) continue;
       await srcFs.writeBytes(p, data);
       restored.push(p);
     }
   } catch (err) {
+    // A write can replace the file and fail afterwards (the read-back check), so count the
+    // failing file as put back unless it provably still holds what it held before.
+    if (files.has(at) && !(await stillHolds(srcFs, at, before))) restored.push(at);
+    if (restored.length === 0) {
+      throw new Error(`Could not restore ${at} (${errorMessage(err)}). No file was changed.`, {
+        cause: err,
+      });
+    }
     throw new RestoreError(at, restored, safetyBackup, err);
   }
   return { safetyBackup, restoredCount: restored.length };
 }
 
-async function hasBytes(fs: PresetFs, path: string, data: Uint8Array): Promise<boolean> {
+async function tryRead(fs: PresetFs, path: string): Promise<Uint8Array | undefined> {
   try {
-    return bytesEqual(await fs.readBytes(path), data);
+    return await fs.readBytes(path);
   } catch {
-    return false;
+    return undefined;
+  }
+}
+
+/** Whether `path` provably holds `before` (or, for undefined, provably does not exist). */
+async function stillHolds(
+  fs: PresetFs,
+  path: string,
+  before: Uint8Array | undefined,
+): Promise<boolean> {
+  try {
+    const now = await fs.readBytes(path);
+    return before !== undefined && bytesEqual(now, before);
+  } catch (err) {
+    return before === undefined && isNotFound(err);
   }
 }
 
@@ -442,13 +465,36 @@ function unzipEntries(zip: Uint8Array): { files: Map<string, Uint8Array>; dirs: 
   return { files, dirs };
 }
 
-function readManifest(zip: Uint8Array): Manifest | null {
+/**
+ * The manifest of a backup zip, or null when there is none or it isn't one of ours. Fields of the
+ * wrong type are left out rather than trusted. Throws only for a damaged zip or invalid JSON.
+ */
+function readManifest(zip: Uint8Array): ManifestInfo | null {
   const raw = unzipSync(zip, { filter: (f) => f.name === MANIFEST_NAME });
   const data = raw[MANIFEST_NAME];
   if (!data) return null;
-  const m = JSON.parse(decodeText(data)) as Partial<Manifest>;
-  if (m.app !== 'preset-doctor' || typeof m.fileCount !== 'number') return null;
-  return m as Manifest;
+  const m: unknown = JSON.parse(decodeText(data));
+  if (!isRecord(m) || m['app'] !== 'preset-doctor' || typeof m['fileCount'] !== 'number') {
+    return null;
+  }
+  const info: ManifestInfo = { fileCount: m['fileCount'] };
+  const { createdAt, reason, sourceRoot, accounts } = m;
+  if (typeof createdAt === 'string') info.createdAt = createdAt;
+  if (REASONS.has(reason)) info.reason = reason as BackupReason;
+  if (typeof sourceRoot === 'string') info.sourceRoot = sourceRoot;
+  if (Array.isArray(accounts) && accounts.every((a) => typeof a === 'string')) {
+    info.accounts = accounts;
+  }
+  return info;
+}
+
+function infoFromManifest(id: string, path: string, bytes: number, m: ManifestInfo): BackupInfo {
+  const info: BackupInfo = { id, path, fileCount: m.fileCount, bytes };
+  if (m.createdAt !== undefined) info.createdAt = m.createdAt;
+  if (m.reason !== undefined) info.reason = m.reason;
+  if (m.sourceRoot !== undefined) info.sourceRoot = m.sourceRoot;
+  if (m.accounts !== undefined) info.accounts = m.accounts;
+  return info;
 }
 
 async function freeId(destFs: PresetFs, base: string): Promise<string> {

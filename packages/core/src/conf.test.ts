@@ -56,7 +56,6 @@ describe('parseStudioConf', () => {
   it('leaves the flag unset when absent or odd', () => {
     const absent = parseStudioConf('{"app":{"language":"en"}}');
     expect(absent.syncUserPreset).toBeUndefined();
-    expect(absent.app).toEqual({ language: 'en' });
     expect(absent.error).toBeUndefined();
     expect(parseStudioConf('{"app":{"sync_user_preset":"maybe"}}').syncUserPreset).toBeUndefined();
   });

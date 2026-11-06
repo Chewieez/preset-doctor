@@ -21,7 +21,8 @@ import {
   initialSelection,
   isProblem,
   mergePaths,
-  presetFilesIn,
+  repairNotice,
+  restoreNotice,
   selectedChoices,
   visiblePresets,
   type Filter,
@@ -69,10 +70,10 @@ export function App() {
   const [backupsOpen, setBackupsOpen] = useState(false);
   const [studioConfirmed, setStudioConfirmed] = useState(false);
   const [copyBack, setCopyBack] = useState<CopyBackState | null>(null);
-  const polledStudio = useStudioStatus();
   /** Ignores answers to older review plans (the .info toggle can fire several). */
   const reviewSeq = useRef(0);
   const web = config?.platform === 'web';
+  const polledStudio = useStudioStatus(config?.platform === 'desktop');
   // A browser can't see processes: in the web version the user's confirmation gates every write.
   const studio: StudioState | 'checking' = web
     ? studioConfirmed
@@ -127,7 +128,11 @@ export function App() {
   );
   const rows = useMemo(
     () => (payload ? visiblePresets(payload.result, byPath, filter, search) : []),
-    [payload, filter, search],
+    [payload, byPath, filter, search],
+  );
+  const problemCount = useMemo(
+    () => (payload ? payload.result.presets.filter((p) => isProblem(p, byPath)).length : 0),
+    [payload, byPath],
   );
   const choices = useMemo(
     () => (payload ? selectedChoices(payload.result, byPath, selection) : []),
@@ -204,29 +209,18 @@ export function App() {
     setApplying(true);
     try {
       const r = await call(api.apply(plan.planId));
-      const n = presetFilesIn(r.written);
       closeReview();
       noteWritten(r.written);
       // The next step opens Studio, so the next write needs a fresh confirmation.
       setStudioConfirmed(false);
-      const where = web ? ', in the preset-doctor-backups folder' : '';
       setNotice({
         kind: 'success',
-        title: `Repaired ${n} preset${n === 1 ? '' : 's'}.`,
         backupId: r.backup.id,
-        lines: [
-          r.backupIsNew
-            ? `Your presets were backed up first (backup ${r.backup.id}${where}).`
-            : `Your presets were already backed up earlier in this session (backup ${r.backup.id}${where}).`,
-          web
-            ? 'Next: copy the repaired files back into Bambu Studio (see below), then open Studio and check that your presets are back.'
-            : 'Next: open Bambu Studio and check that your presets are back. If anything looks wrong, use "Restore a backup".',
-          ...(cloud
-            ? [
-                'Cloud sync is on: if a repair comes undone after Studio syncs, turn sync off and repair again.',
-              ]
-            : []),
-        ],
+        ...repairNotice(r, {
+          web,
+          cloud: cloud !== undefined,
+          backupsDir: config?.backupsDir ?? '',
+        }),
       });
       await runScan(root, userId);
     } catch (e) {
@@ -284,7 +278,11 @@ export function App() {
         </div>
       )}
       {notice && (
-        <div className={`banner ${notice.kind}`} role="status" data-testid="result-banner">
+        <div
+          className={`banner ${notice.kind}`}
+          role={notice.kind === 'error' ? 'alert' : 'status'}
+          data-testid="result-banner"
+        >
           <div>
             <strong>{notice.title}</strong>
             {notice.lines.map((l, i) => (
@@ -403,7 +401,7 @@ export function App() {
               selectedPath={selectedPath}
               filter={filter}
               search={search}
-              problemCount={payload.result.presets.filter((p) => isProblem(p, byPath)).length}
+              problemCount={problemCount}
               totalCount={payload.result.presets.length}
               onFilter={setFilter}
               onSearch={setSearch}
@@ -428,6 +426,7 @@ export function App() {
           count={choices.length}
           studio={studio}
           busy={busy}
+          confirmToWrite={web}
           studioGate={studioGate}
           onFix={() => void planReview(updateBaseId)}
         />
@@ -458,6 +457,7 @@ export function App() {
         <BackupsDialog
           platform={config?.platform ?? 'desktop'}
           root={root}
+          backupsDir={config?.backupsDir ?? ''}
           studio={studio}
           studioGate={studioGate}
           onClose={() => setBackupsOpen(false)}
@@ -465,21 +465,13 @@ export function App() {
             setBackupsOpen(false);
             noteWritten([], true);
             setStudioConfirmed(false);
-            setNotice({
-              kind: 'success',
-              title: `Restored backup ${id}.`,
-              lines: [
-                `${count} files were put back. The state before the restore was backed up too.`,
-                ...(web
-                  ? ['Copy the user folder back into Bambu Studio to finish (see below).']
-                  : []),
-              ],
-            });
+            setNotice({ kind: 'success', ...restoreNotice(id, count, web) });
             void runScan(root, userId);
           }}
-          onRestoreStopped={(message) => {
+          onRestoreStopped={(message, written) => {
             // Some files were put back, some not: say which backup undoes it, show the real state.
             setBackupsOpen(false);
+            noteWritten(written);
             setNotice({ kind: 'error', title: 'The restore stopped part-way.', lines: [message] });
             void runScan(root, userId);
           }}
@@ -489,24 +481,35 @@ export function App() {
   );
 }
 
-/** Polls whether Bambu Studio is running, every few seconds. */
-function useStudioStatus(): StudioState | 'checking' {
+/**
+ * Polls whether Bambu Studio is running while `enabled`. The next check is scheduled only once
+ * the previous one has answered, so slow process checks never overlap or arrive out of order.
+ */
+function useStudioStatus(enabled: boolean): StudioState | 'checking' {
   const [state, setState] = useState<StudioState | 'checking'>('checking');
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
+    let timer: number | undefined;
     const check = (): void => {
-      api.studioStatus().then(
-        (r) => alive && setState(r.ok ? r.value : 'unknown'),
-        () => alive && setState('unknown'),
-      );
+      api
+        .studioStatus()
+        .then(
+          (r) => (r.ok ? r.value : 'unknown'),
+          () => 'unknown' as const,
+        )
+        .then((s) => {
+          if (!alive) return;
+          setState(s);
+          timer = window.setTimeout(check, STUDIO_POLL_MS);
+        });
     };
     check();
-    const timer = window.setInterval(check, STUDIO_POLL_MS);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [enabled]);
   return state;
 }
 

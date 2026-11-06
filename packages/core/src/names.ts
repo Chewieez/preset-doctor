@@ -106,10 +106,6 @@ export function parseCompatiblePrinter(entry: string): ParsedCompatiblePrinter |
   return { model: m[1], nozzle: m[2] };
 }
 
-export function compatiblePrinterName(model: string, nozzle: string): string {
-  return `${model} ${nozzle} nozzle`;
-}
-
 /** Normalizes "0.40" / "0.4" so nozzle sizes compare by value. */
 export function sameNozzle(a: string, b: string): boolean {
   return Number(a) === Number(b);

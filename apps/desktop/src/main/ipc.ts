@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { errorMessage } from '@preset-doctor/core';
 import { CHANNELS, type IpcResult } from '../shared/api.js';
 import type { DoctorService } from './service.js';
 
@@ -58,7 +59,12 @@ export function registerIpc(
       ) {
         return { ok: false, error: { code: 'invalid', message: 'Request from an unknown page.' } };
       }
-      return handler(event, ...args);
+      // An IpcResult, never a rejection: the UI relies on that (e.g. shell.openExternal or
+      // mkdir throwing would otherwise surface as an unhandled rejection in the window).
+      return handler(event, ...args).catch((err: unknown): IpcResult<unknown> => ({
+        ok: false,
+        error: { code: 'failed', message: errorMessage(err) },
+      }));
     });
   }
 }

@@ -8,34 +8,38 @@ import { promises as fsp } from 'node:fs';
 import * as nodePath from 'node:path';
 import {
   applyChanges,
-  ApplyError,
+  assertBackupCovers,
   BackupSession,
-  BackupSourceError,
   defaultChoices,
-  FixError,
+  findStale,
   isBackupId,
   listBackups,
   missingFromBackup,
   planFixes,
   restoreBackup,
-  RestoreError,
   scan,
   ScanError,
-  StaleChangeError,
-  unifiedDiff,
   type BackupInfo,
-  type Change,
-  type FixChoice,
+  type PresetFs,
   type ScanResult,
 } from '@preset-doctor/core';
-import { nodeFs } from '@preset-doctor/core/node';
+import { nodeFs, type NodeFsOptions } from '@preset-doctor/core/node';
+import {
+  applyFailure,
+  invalid,
+  parseChoices,
+  parsePlanOptions,
+  PlanStore,
+  Refusal,
+  restoreFailure,
+  run,
+  staleRefusal,
+  WriteQueue,
+} from '@preset-doctor/ui/service';
 import type {
   AppConfig,
   ApplyPayload,
-  IpcError,
-  IpcErrorCode,
   IpcResult,
-  PlanOptions,
   PlanPayload,
   RestoreOptions,
   RestorePayload,
@@ -51,29 +55,20 @@ export interface ServiceDeps {
   version: string;
   donationUrl: string;
   now?: () => Date;
-}
-
-const MAX_PLANS = 50;
-
-class Refusal extends Error {
-  constructor(
-    readonly code: IpcErrorCode,
-    message: string,
-    readonly extra: Partial<IpcError> = {},
-  ) {
-    super(message);
-  }
+  /** Opens a folder as a PresetFs. Default nodeFs; tests wrap it. */
+  fsFor?: (root: string, options?: NodeFsOptions) => PresetFs;
 }
 
 export class DoctorService {
   private readonly allowedRoots = new Map<string, string>();
   private lastScan: { root: string; result: ScanResult } | null = null;
-  private readonly plans = new Map<string, { root: string; changes: Change[] }>();
+  /** Previews, keyed to the Studio folder they were planned for. */
+  private readonly plans = new PlanStore<string>();
   private readonly sessions = new Map<string, BackupSession>();
   /** Set when a Studio check saw it running; the next repair then makes a fresh backup. */
   private studioSeenRunning = false;
   /** Writes (apply, restore) run one at a time. */
-  private writeQueue: Promise<unknown> = Promise.resolve();
+  private readonly writes = new WriteQueue();
 
   constructor(private readonly deps: ServiceDeps) {
     this.allow(deps.config.root);
@@ -119,7 +114,7 @@ export class DoctorService {
       if (!(await isDir(dir))) {
         throw new Refusal('scan-failed', `The folder ${dir} does not exist.`);
       }
-      const fs = nodeFs(dir, { readOnly: true });
+      const fs = this.fs(dir, { readOnly: true });
       let result: ScanResult;
       try {
         result = await scan(fs, userId ? { root: dir, userId } : { root: dir });
@@ -137,38 +132,36 @@ export class DoctorService {
     return run(async () => {
       const last = this.lastScan;
       if (!last) throw invalid('Scan first.');
-      const parsed = parseChoices(choices);
-      const updateBaseId = (options as Partial<PlanOptions> | null)?.updateBaseId !== false;
-      const changes = await planFixes(nodeFs(last.root, { readOnly: true }), last.result, parsed, {
-        updateBaseId,
-      });
-      const planId = randomUUID();
-      this.plans.set(planId, { root: last.root, changes });
-      while (this.plans.size > MAX_PLANS) this.plans.delete(this.plans.keys().next().value!);
-      return {
-        planId,
-        changes: changes.map((c) => ({
-          path: c.path,
-          description: c.description,
-          diff: unifiedDiff(c),
-        })),
-      };
+      const changes = await planFixes(
+        this.fs(last.root, { readOnly: true }),
+        last.result,
+        parseChoices(choices),
+        parsePlanOptions(options),
+      );
+      return this.plans.add(last.root, changes, randomUUID());
     });
   }
 
   apply(planId: unknown): Promise<IpcResult<ApplyPayload>> {
-    return this.serialized(async () => {
-      const plan = typeof planId === 'string' ? this.plans.get(planId) : undefined;
+    return this.writes.run(async () => {
+      const plan = this.plans.get(planId);
       if (!plan) throw invalid('This preview is out of date. Scan again, then try the repair.');
       if (plan.changes.length === 0) throw invalid('There is nothing to repair in this selection.');
-      await this.requireStudioClosed(plan.root);
+      const root = plan.key;
+      await this.requireStudioClosed(root);
+      // Before any backup: a file deleted since the scan is "changed", not "missing from the
+      // backup", and needs no new backup to be refused.
+      if ((await findStale(this.fs(root, { readOnly: true }), plan.changes)).length > 0) {
+        this.plans.clear();
+        throw staleRefusal();
+      }
 
       // Studio ran since the last backup, so it may have changed files the backup doesn't cover.
       if (this.studioSeenRunning) {
         this.sessions.clear();
         this.studioSeenRunning = false;
       }
-      let session = this.sessionFor(plan.root);
+      let session = this.sessionFor(root);
       let backupIsNew = session.backup === null;
       let backup = await session.ensureBackupOnce();
       // Whatever happens next, the files no longer match any other preview.
@@ -176,50 +169,34 @@ export class DoctorService {
       const paths = plan.changes.map((c) => c.path);
       // A file the session's backup doesn't hold (added since) gets a fresh backup first.
       if (!backupIsNew && missingFromBackup(backup, paths).length > 0) {
-        this.sessions.delete(rootKey(plan.root));
-        session = this.sessionFor(plan.root);
+        this.sessions.delete(rootKey(root));
+        session = this.sessionFor(root);
         backupIsNew = true;
         backup = await session.ensureBackupOnce();
       }
       // Never write what the backup can't undo (e.g. files behind a link it couldn't follow).
-      const missing = missingFromBackup(backup, paths);
-      if (missing.length > 0) {
-        this.sessions.delete(rootKey(plan.root));
-        throw new Refusal(
-          'failed',
-          `Backup ${backup.id} doesn't include ${missing.join(', ')}, so the repair couldn't be ` +
-            'undone and nothing was written. Is part of the user folder a link to another place?',
-        );
+      try {
+        assertBackupCovers(backup, paths);
+      } catch (err) {
+        this.sessions.delete(rootKey(root));
+        throw applyFailure(err, backup.id) ?? err;
       }
       try {
-        const { written } = await applyChanges(nodeFs(plan.root), plan.changes);
+        const { written } = await applyChanges(this.fs(root), plan.changes);
         return { written, backup, backupIsNew };
       } catch (err) {
-        if (err instanceof StaleChangeError) {
-          throw new Refusal(
-            'stale',
-            'Some files changed since the scan, so nothing was written. Scan again and retry.',
-          );
-        }
-        if (err instanceof ApplyError) {
-          throw new Refusal(
-            'partial',
-            `${err.message}. Some files were already changed; restore backup ${backup.id} to undo.`,
-            { written: err.written, backupId: backup.id },
-          );
-        }
-        throw err;
+        throw applyFailure(err, backup.id) ?? err;
       }
     });
   }
 
   listBackups(): Promise<IpcResult<BackupInfo[]>> {
-    return run(() => listBackups(nodeFs(this.deps.config.backupsDir, { readOnly: true })));
+    return run(() => listBackups(this.fs(this.deps.config.backupsDir, { readOnly: true })));
   }
 
   /** Restores into `root`, the folder the UI shows; it must be one the UI was allowed to scan. */
   restore(root: unknown, backupId: unknown, options?: unknown): Promise<IpcResult<RestorePayload>> {
-    return this.serialized(async () => {
+    return this.writes.run(async () => {
       const dir = this.checkRoot(root);
       if (typeof backupId !== 'string' || !isBackupId(backupId)) throw invalid('Bad backup name.');
       const allowOtherSource = (options as RestoreOptions | null)?.allowOtherSource === true;
@@ -228,25 +205,13 @@ export class DoctorService {
       const now = this.deps.now?.();
       let result;
       try {
-        result = await restoreBackup(nodeFs(dir), nodeFs(this.deps.config.backupsDir), backupId, {
+        result = await restoreBackup(this.fs(dir), this.fs(this.deps.config.backupsDir), backupId, {
           expectedRoot: dir,
           allowOtherSource,
           ...(now ? { now } : {}),
         });
       } catch (err) {
-        if (err instanceof BackupSourceError) throw new Refusal('other-source', err.message);
-        if (err instanceof RestoreError) {
-          throw new Refusal(
-            'partial',
-            err.message +
-              (err.safetyBackup ? '' : ' Restore the same backup again once the problem is fixed.'),
-            {
-              written: err.restored,
-              ...(err.safetyBackup ? { backupId: err.safetyBackup.id } : {}),
-            },
-          );
-        }
-        throw err;
+        throw restoreFailure(err) ?? err;
       } finally {
         // The files may no longer match this session's backup; the next repair makes a new one.
         this.sessions.delete(rootKey(dir));
@@ -309,7 +274,7 @@ export class DoctorService {
     let s = this.sessions.get(key);
     if (!s) {
       const now = this.deps.now;
-      s = new BackupSession(nodeFs(root), nodeFs(this.deps.config.backupsDir), {
+      s = new BackupSession(this.fs(root), this.fs(this.deps.config.backupsDir), {
         reason: 'before-fix',
         sourceRoot: root,
         ...(now ? { now: now() } : {}),
@@ -331,10 +296,8 @@ export class DoctorService {
     return abs;
   }
 
-  private serialized<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
-    const next = this.writeQueue.then(() => run(fn));
-    this.writeQueue = next;
-    return next;
+  private fs(root: string, options?: NodeFsOptions): PresetFs {
+    return (this.deps.fsFor ?? nodeFs)(root, options);
   }
 }
 
@@ -342,43 +305,10 @@ function rootKey(abs: string): string {
   return process.platform === 'win32' ? abs.toLowerCase() : abs;
 }
 
-function invalid(message: string): Refusal {
-  return new Refusal('invalid', message);
-}
-
 async function isDir(p: string): Promise<boolean> {
   try {
     return (await fsp.stat(p)).isDirectory();
   } catch {
     return false;
-  }
-}
-
-function parseChoices(value: unknown): FixChoice[] {
-  if (!Array.isArray(value)) throw invalid('Bad fix selection.');
-  return value.map((v: unknown) => {
-    const c = v as Partial<Record<keyof FixChoice, unknown>> | null;
-    if (!c || typeof c.presetPath !== 'string') throw invalid('Bad fix selection.');
-    const choice: FixChoice = { presetPath: c.presetPath };
-    if (typeof c.candidateName === 'string') choice.candidateName = c.candidateName;
-    if (c.rename === true) choice.rename = true;
-    return choice;
-  });
-}
-
-async function run<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
-  try {
-    return { ok: true, value: await fn() };
-  } catch (err) {
-    if (err instanceof Refusal) {
-      return { ok: false, error: { code: err.code, message: err.message, ...err.extra } };
-    }
-    if (err instanceof FixError) {
-      return {
-        ok: false,
-        error: { code: err.stale ? 'stale' : 'invalid', message: err.message },
-      };
-    }
-    return { ok: false, error: { code: 'failed', message: (err as Error).message } };
   }
 }

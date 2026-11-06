@@ -206,7 +206,9 @@ const fixtures: Record<string, { syncUserPreset: boolean; users: Record<string, 
           template: SYNTH_TEMPLATE,
           name: 'Synthetic Stripped Suffix',
           inherits: 'Bambu PLA Basic @BBL X2D',
-          note: 'suffix stripped where the system name needs " 0.4 nozzle"',
+          note:
+            'no nozzle size in the name, where every unsuffixed X2D preset is for 0.6/0.8, so ' +
+            'the size is unsure and nothing is pre-selected (see the note below the table)',
         },
         {
           kind: 'synthetic',
@@ -475,6 +477,17 @@ function modelFor(printer: string): string | undefined {
   return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
+/** True when some instantiable unsuffixed preset for this printer is not 0.4-only. */
+function unsuffixedVaries(printer: string, model: string): boolean {
+  return trimmedIndex.filament_list.some((e) => {
+    const p = parseName(e.name);
+    if (!p || p.printer !== printer || p.nozzle !== undefined) return false;
+    if (systemPreset(e.name)?.json.instantiation !== 'true') return false;
+    const sizes = (resolvedCompat(e.name) ?? []).filter((c) => c.startsWith(`${model} `));
+    return sizes.length > 0 && (sizes.length > 1 || sizes[0] !== `${model} 0.4 nozzle`);
+  });
+}
+
 function orphanTable(files: OutFile[]): string {
   const userNames = new Set(
     files
@@ -506,17 +519,33 @@ function orphanTable(files: OutFile[]): string {
           })
       : [];
     const model = parsed ? modelFor(parsed.printer) : undefined;
-    const target = model ? `${model} ${parsed?.nozzle ?? '0.4'} nozzle` : undefined;
+    // No size in the name: only safe to assume 0.4 when the profile's unsuffixed presets for
+    // this printer are all 0.4-only; otherwise the user has to pick (R1's 'family' evidence).
+    const unsure =
+      parsed !== undefined &&
+      parsed.nozzle === undefined &&
+      model !== undefined &&
+      unsuffixedVaries(parsed.printer, model);
+    const target = model && !unsure ? `${model} ${parsed?.nozzle ?? '0.4'} nozzle` : undefined;
     const high = variants.filter((n) => target && resolvedCompat(n)?.includes(target));
     rows.push(
       `| ${path.posix.basename(f.rel)} | ${inh} | ${
         variants.map((n) => `${n} (${(resolvedCompat(n) ?? []).join(', ')})`).join('<br>') ||
         '(none)'
-      } | ${high.join(', ') || '(none)'} |`,
+      } | ${unsure ? '(none: no nozzle size in the name, user picks)' : high.join(', ') || '(none)'} |`,
     );
   }
   return rows.join('\n');
 }
+
+const STRIPPED_NOTE = `Why \`Synthetic Stripped Suffix\` has no pre-selected fix: before the R1 nozzle hardening this
+fixture expected \`Bambu PLA Basic @BBL X2D 0.4 nozzle\`, because a name without a size was taken
+to mean 0.4. In this profile every unsuffixed X2D preset is the 0.6/0.8 variant (e.g.
+\`Generic PETG @BBL X2D\`), so that guess could put a 0.6 or 0.8 nozzle on 0.4 settings: a
+wrong-nozzle pick. Over the whole live profile, \`node scripts/r1-simulate.ts\` counted 150 such
+pre-selections when an unsuffixed parent disappears (and 143 more for renamed ones). R1 now lists
+each same-printer size as medium and asks the user to pick. The sidecar's \`base_id\`
+(\`GFSG99_15\`, a Generic PETG preset) is for another filament, so it is ignored.`;
 
 const synthNotes = (fixtures['broken-r1']!.users.main ?? [])
   .filter((e): e is Synthetic => e.kind === 'synthetic')
@@ -560,7 +589,7 @@ ${[...printers].sort().join(', ')}, plus their full \`inherits\` and \`include\`
 \`machine_list\` and \`process_list\` are empty. Every \`filament_list\` entry has its file.
 
 Note: in this profile version the X2D preset without a nozzle suffix (e.g. \`Generic PETG @BBL X2D\`)
-is the 0.6/0.8 nozzle variant, while X1C's unsuffixed preset is the 0.4 variant. Resolve
+is the 0.6/0.8 nozzle variant, while X1C's unsuffixed preset usually covers 0.4. Resolve
 compatibility through the inherit chain; \`fdm_filament_common\` has \`compatible_printers: []\`.
 
 ## healthy/
@@ -585,9 +614,13 @@ R5_CLOUD_SYNC warning.
 ${synthNotes}
 
 Expected R1 findings (computed by the generator: same stem and printer, high when the resolved
-\`compatible_printers\` contains "<model> <nozzle from the name, default 0.4> nozzle"):
+\`compatible_printers\` contains "<model> <nozzle from the name> nozzle". A name without a size
+means 0.4 only if every unsuffixed preset for that printer is 0.4-only; otherwise nothing is
+pre-selected and the user picks):
 
 ${orphanTable(userFiles.get('broken-r1')!)}
+
+${STRIPPED_NOTE}
 
 Also expected: R4 "missing sidecar" (severity info) for the 18 \`06\` presets.
 

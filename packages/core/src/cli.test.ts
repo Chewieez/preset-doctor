@@ -23,6 +23,7 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
   const backupsDir = join(t.dir, '..', 'backups');
   let running = false;
   let checkFails = false;
+  let onCheck: (() => void) | undefined;
   const run = async (...argv: string[]): Promise<Run> => {
     let out = '';
     let err = '';
@@ -31,6 +32,7 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
       stderr: (s) => (err += s),
       paths: { studioRoot: t.dir, backupsDir },
       isStudioRunning: async () => {
+        onCheck?.();
         if (checkFails) throw new Error('tasklist failed');
         return running;
       },
@@ -45,12 +47,14 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
     run,
     setRunning: (v: boolean) => (running = v),
     failCheck: () => (checkFails = true),
+    /** Runs when the CLI checks for Studio: after planning, before any backup or write. */
+    onStudioCheck: (fn: () => void) => (onCheck = fn),
     read: (rel: string) => readFileSync(join(t.dir, rel), 'utf8'),
   };
 }
 
 const PETG06 = 'user/1000000001/filament/Anycubic Petg 06.json';
-const STRIPPED_INFO = 'user/1000000001/filament/Synthetic Stripped Suffix.info';
+const ADDED_INFO = 'user/1000000001/filament/Synthetic Added Suffix.info';
 
 describe('preset-doctor CLI', () => {
   it('prints help and the version', async () => {
@@ -72,6 +76,25 @@ describe('preset-doctor CLI', () => {
     expect(r.err).toContain('Unknown option --colour.');
     expect((await run('scan', '--user')).code).toBe(EXIT.usage);
     expect((await run('scan', 'a', 'b')).code).toBe(EXIT.usage);
+  });
+
+  it('treats a folder named like an Object.prototype key as a folder, not a flag', async () => {
+    const t = tempFixture('healthy');
+    cleanups.push(t.cleanup);
+    // The default root must never be used in place of the folder that was named.
+    const missingDefault = join(t.dir, 'no-such-default-root');
+    for (const name of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      let err = '';
+      const code = await main(['scan', name], {
+        stdout: () => {},
+        stderr: (s) => (err += s),
+        paths: { studioRoot: missingDefault, backupsDir: join(t.dir, 'backups') },
+        isStudioRunning: async () => false,
+      });
+      expect(code).toBe(EXIT.failed);
+      expect(err).toContain(`The folder ${name} does not exist.`);
+      expect(err).not.toContain(missingDefault);
+    }
   });
 
   it('scan: groups presets by status and exits 1 when some are hidden', async () => {
@@ -115,7 +138,7 @@ describe('preset-doctor CLI', () => {
     const before = read(PETG06);
     const r = await run('fix', '--dry-run');
     expect(r.code).toBe(EXIT.ok);
-    expect(r.out).toContain('22 file change(s) planned:');
+    expect(r.out).toContain('20 file change(s) planned:');
     expect(r.out).toContain('-    "inherits": "Generic PETG @BBL X2D 0.6 nozzle",');
     expect(r.out).toContain('+    "inherits": "Generic PETG @BBL X2D",');
     expect(r.out).toContain('-base_id = GFSG99_15');
@@ -127,7 +150,7 @@ describe('preset-doctor CLI', () => {
   it('fix --no-base-id leaves sidecars out of the plan', async () => {
     const { run } = setup();
     const r = await run('fix', '--no-base-id');
-    expect(r.out).toContain('20 file change(s) planned:');
+    expect(r.out).toContain('19 file change(s) planned:');
     expect(r.out).not.toContain('base_id');
   });
 
@@ -178,22 +201,33 @@ describe('preset-doctor CLI', () => {
     expect(existsSync(s.backupsDir)).toBe(false);
   });
 
+  it('fix --apply: a planned file deleted after planning is stale, and nothing is backed up', async () => {
+    const s = setup();
+    s.onStudioCheck(() => rmSync(join(s.root, ...PETG06.split('/'))));
+    const r = await s.run('fix', '--apply', '--yes');
+    expect(r.code).toBe(EXIT.refused);
+    expect(r.err).toContain('changed since the fix was planned');
+    expect(r.err).toContain(PETG06);
+    expect(r.err).not.toContain('does not include');
+    expect(existsSync(s.backupsDir)).toBe(false);
+  });
+
   it('fix --apply --yes: backs up, repairs, and backups restore undoes it', async () => {
     const s = setup();
     const before = s.read(PETG06);
-    const infoBefore = s.read(STRIPPED_INFO);
+    const infoBefore = s.read(ADDED_INFO);
 
     const r = await s.run('fix', '--apply', '--yes');
     expect(r.code).toBe(EXIT.ok);
     expect(r.out).toContain('(backup 2026-11-05T17-30-00)');
-    expect(r.out).toContain('Done: changed 22 file(s).');
+    expect(r.out).toContain('Done: changed 20 file(s).');
     expect(r.out).toContain('preset-doctor backups restore 2026-11-05T17-30-00');
     expect(readdirSync(s.backupsDir)).toEqual(['2026-11-05T17-30-00.zip']);
     expect(s.read(PETG06)).toContain('"inherits": "Generic PETG @BBL X2D",');
-    expect(s.read(STRIPPED_INFO)).toContain('base_id = GFSA00_08');
+    expect(s.read(ADDED_INFO)).toContain('base_id = GFSB00\r\n');
 
     const rescan = await s.run('scan');
-    expect(rescan.out).toContain('Hidden in Studio (2)');
+    expect(rescan.out).toContain('Hidden in Studio (3)');
 
     const list = await s.run('backups');
     expect(list.out).toContain('2026-11-05T17-30-00');
@@ -204,7 +238,7 @@ describe('preset-doctor CLI', () => {
     expect(restore.code).toBe(EXIT.ok);
     expect(restore.out).toContain('saved as backup 2026-11-05T17-30-00-2');
     expect(s.read(PETG06)).toBe(before);
-    expect(s.read(STRIPPED_INFO)).toBe(infoBefore);
+    expect(s.read(ADDED_INFO)).toBe(infoBefore);
   });
 
   it('scan: exits 3, not 0, when the system presets are missing or corrupt', async () => {

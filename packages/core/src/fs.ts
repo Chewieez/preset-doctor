@@ -20,8 +20,6 @@ export interface PresetFs {
   exists(path: string): Promise<boolean>;
   /** Recursive; succeeds if the folder already exists. */
   mkdir(path: string): Promise<void>;
-  /** Removes a file, or a folder and everything in it. */
-  remove?(path: string): Promise<void>;
 }
 
 /** Error thrown by adapters for a missing path, so callers can branch on `code`. */
@@ -31,6 +29,11 @@ export class FsNotFoundError extends Error {
     super(`Not found: ${path === '' ? '(root)' : path}`);
     this.name = 'FsNotFoundError';
   }
+}
+
+/** The message of an Error, or the thrown value as text (a string, null, ...). */
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export function isNotFound(err: unknown): boolean {

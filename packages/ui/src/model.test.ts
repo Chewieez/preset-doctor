@@ -2,12 +2,15 @@ import type { Finding, PresetSummary, ScanResult } from '@preset-doctor/core';
 import { describe, expect, it } from 'vitest';
 import {
   choiceFor,
+  displayName,
   findingsByPath,
   fixesFor,
   initialSelection,
   isProblem,
   mergePaths,
   orderFindings,
+  repairNotice,
+  restoreNotice,
   selectedChoices,
   visiblePresets,
   windowsPath,
@@ -16,6 +19,7 @@ import {
 const preset = (path: string, status: PresetSummary['status'], name?: string): PresetSummary => ({
   accountId: '1000000001',
   path,
+  fileStem: path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/i, ''),
   ...(name ? { name } : {}),
   isBase: false,
   status,
@@ -116,6 +120,58 @@ describe('renderer model', () => {
       'Name mismatch',
       'No sync file',
     ]);
+  });
+});
+
+describe('result banners', () => {
+  const desktop = {
+    web: false,
+    cloud: false,
+    backupsDir: 'C:/Users/x/AppData/Roaming/PresetDoctor/backups',
+  };
+  const web = { web: true, cloud: false, backupsDir: 'preset-doctor-backups' };
+  const applied = (written: string[], backupIsNew: boolean) => ({
+    written,
+    backup: { id: '2026-11-05T17-30-00' },
+    backupIsNew,
+  });
+
+  it('counts repaired presets, not sync files, and says where the backup is', () => {
+    const one = repairNotice(applied(['a.json', 'a.info'], true), desktop);
+    expect(one.title).toBe('Repaired 1 preset.');
+    expect(one.lines).toEqual([
+      'Your presets were backed up first (backup 2026-11-05T17-30-00).',
+      'Next: open Bambu Studio and check that your presets are back. If anything looks wrong, use "Restore a backup".',
+    ]);
+    const two = repairNotice(applied(['a.json', 'b.json'], false), web);
+    expect(two.title).toBe('Repaired 2 presets.');
+    expect(two.lines[0]).toBe(
+      'Your presets were already backed up earlier in this session (backup 2026-11-05T17-30-00, in the preset-doctor-backups folder).',
+    );
+    expect(two.lines[1]).toMatch(/^Next: copy the repaired files back into Bambu Studio/);
+  });
+
+  it('adds the cloud-sync line only when sync is on', () => {
+    const lines = repairNotice(applied(['a.json'], true), { ...desktop, cloud: true }).lines;
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toMatch(/^Cloud sync is on/);
+  });
+
+  it('tells the web user to copy the restored folder back', () => {
+    expect(restoreNotice('2026-11-05T17-30-00', 4, false)).toEqual({
+      title: 'Restored backup 2026-11-05T17-30-00.',
+      lines: ['4 files were put back. The state before the restore was backed up too.'],
+    });
+    expect(restoreNotice('2026-11-05T17-30-00', 4, true).lines[1]).toBe(
+      'Copy the user folder back into Bambu Studio to finish (see below).',
+    );
+  });
+});
+
+describe('displayName', () => {
+  it('uses the name, else the file stem core worked out', () => {
+    expect(displayName(preset('user/1/filament/A.json', 'ok', 'Alpha'))).toBe('Alpha');
+    expect(displayName({ ...preset('user/1/filament/B.JSON', 'broken'), fileStem: 'B' })).toBe('B');
   });
 });
 

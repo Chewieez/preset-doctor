@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { memFs } from './memFs.js';
+import { parsePresetName } from './names.js';
 import { defaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
 import { R1_ID } from './rules/r1.js';
 import { R4_ID } from './rules/r4.js';
 import { R5_ID, scan, ScanError } from './scan.js';
+import { loadSystemIndexes } from './systemIndex.js';
 import { fixtureRoot, type FixtureName } from './testing/fixtures.js';
 import { fakeStudio, sidecar } from './testing/studio.js';
 import type { Finding, ScanResult } from './types.js';
@@ -45,10 +47,8 @@ const BROKEN_R1: Record<string, [string, string | null]> = {
   'Overture ASA 06.json': ['Generic ASA @BBL X2D 0.6 nozzle', 'Generic ASA @BBL X2D'],
   'ProtoPast htpla 06.json': ['Generic PLA @BBL X2D 0.6 nozzle', 'Generic PLA @BBL X2D'],
   'sunlu pla+ 2.0 06.json': ['Bambu PLA Matte @BBL X2D 0.6 nozzle', 'Bambu PLA Matte @BBL X2D'],
-  'Synthetic Stripped Suffix.json': [
-    'Bambu PLA Basic @BBL X2D',
-    'Bambu PLA Basic @BBL X2D 0.4 nozzle',
-  ],
+  // No nozzle size in the name, and unsuffixed X2D presets are the 0.6/0.8 ones: ask, don't guess.
+  'Synthetic Stripped Suffix.json': ['Bambu PLA Basic @BBL X2D', null],
   'Synthetic Added Suffix.json': ['Bambu ABS @BBL X1C 0.4 nozzle', 'Bambu ABS @BBL X1C'],
   'Synthetic Other Printer Only.json': ['Overture PLA @BBL X2D 0.4 nozzle', null],
   'Synthetic No Candidates.json': ['Unobtainium Filament @BBL X2D 0.4 nozzle', null],
@@ -258,22 +258,60 @@ describe('scan on fixtures', () => {
     expect((await scan(off)).findings).toEqual([]);
   });
 
+  it('gives every summary the file stem, whatever the case of .json', async () => {
+    const fs = memFs({
+      'system/BBL.json': '{"filament_list": []}',
+      'user/1/filament/Upper.JSON': '{ cut sho',
+      'user/1/filament/Named.json': '{"name": "Named"}',
+    });
+    const r = await scan(fs);
+    expect(r.presets.map((p) => [p.fileStem, p.name ?? null])).toEqual([
+      ['Named', 'Named'],
+      ['Upper', null],
+    ]);
+  });
+
+  it('warns when BambuStudio.conf is unreadable, but not when it is fine or absent', async () => {
+    const syncWarnings = (r: ScanResult) =>
+      r.warnings.filter((w) => w.includes('cloud preset sync'));
+    const truncated = await scan(fakeStudio([], [], { conf: '{"app": ' }));
+    expect(syncWarnings(truncated)).toHaveLength(1);
+    expect(syncWarnings(truncated)[0]).toMatch(/^BambuStudio\.conf is not valid JSON/);
+    expect(truncated.findings.filter((f) => f.ruleId === R5_ID)).toEqual([]);
+
+    const off = await scan(fakeStudio([], [], { conf: '{"app":{"sync_user_preset":false}}' }));
+    expect(syncWarnings(off)).toEqual([]);
+    expect(syncWarnings(await scan(fakeStudio([], [])))).toEqual([]);
+
+    // Damaged, but the flag itself is still readable: the finding, and no extra warning.
+    const halfOn = await scan(fakeStudio([], [], { conf: '{"app": {"sync_user_preset": true, ' }));
+    expect(halfOn.findings.filter((f) => f.ruleId === R5_ID)).toHaveLength(1);
+    expect(syncWarnings(halfOn)).toEqual([]);
+  });
+
   it('result is plain data (survives JSON, as IPC needs)', async () => {
     const r: ScanResult = await scan(fixture('broken-r1'));
     expect(JSON.parse(JSON.stringify(r))).toEqual(r);
   });
 });
 
-// Read-only check against the real install: PRESET_DOCTOR_LIVE=1 npx vitest run scan
+// Read-only check against the real install: npm run test:live -- scan
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live scan (read-only)', () => {
   it('finds the 18 orphans of the main account, each with a pre-selected fix', async () => {
     const fs = nodeFs(defaultPaths().studioRoot, { readOnly: true });
     const r = await scan(fs);
     const r1 = r.findings.filter((f) => f.ruleId === R1_ID);
     expect(r1).toHaveLength(18);
+    const system = await loadSystemIndexes(fs);
     for (const f of r1) {
       const pick = f.proposedFix?.kind === 'setInherits' ? f.proposedFix.candidates : [];
       expect(pick.filter((c) => c.preselected && c.confidence === 'high')).toHaveLength(1);
+      // ...and it is for the nozzle the missing parent's name says.
+      const missing = parsePresetName(r.presets.find((p) => p.path === f.presetPath)!.inherits!);
+      const model = await system.modelOf(missing!);
+      const compat = await system.effectiveCompatiblePrinters(preselected(f)!);
+      expect(missing?.nozzle).toBeDefined();
+      expect(compat).toContain(`${model} ${missing?.nozzle} nozzle`);
     }
     const petg = r1.find((f) => f.presetName === 'Anycubic Petg 06');
     expect(preselected(petg!)).toBe('Generic PETG @BBL X2D');

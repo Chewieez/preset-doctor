@@ -77,7 +77,6 @@ describe('loadSystemIndex on fixtures', () => {
     const unsuffixed = await index.load('Generic PETG @BBL X2D');
     expect(unsuffixed).toMatchObject({
       name: 'Generic PETG @BBL X2D',
-      type: 'filament',
       settingId: 'GFSG99_16',
       inherits: 'Generic PETG @base',
       instantiation: true,
@@ -102,14 +101,6 @@ describe('loadSystemIndex on fixtures', () => {
     // @base and templates fall through to fdm_filament_common, which sets [].
     expect(await index.effectiveCompatiblePrinters('Generic PETG @base')).toEqual([]);
     expect(await index.effectiveCompatiblePrinters('Missing')).toBeNull();
-  });
-
-  it('walks the chain to the root template', async () => {
-    const index = await loadSystemIndex(fixtureFs('healthy'));
-    const chain = (await index.chain('Generic PETG @BBL X2D')).map((p) => p.name);
-    expect(chain[0]).toBe('Generic PETG @BBL X2D');
-    expect(chain).toContain('Generic PETG @base');
-    expect(chain.at(-1)).toBe('fdm_filament_common');
   });
 
   it('finds siblings by stem, case-insensitively, skipping @base', async () => {
@@ -141,11 +132,6 @@ describe('loadSystemIndex on fixtures', () => {
     expect(await index.printerModel('BBL', 'X1C')).toBe('Bambu Lab X1 Carbon');
     expect(await index.printerModel('BBL', 'H2D')).toBe('Bambu Lab H2D');
     expect(await index.printerModel('BBL', 'ZZZ')).toBeNull();
-    expect(Object.fromEntries(await index.printerModelMap())).toEqual({
-      'BBL H2D': 'Bambu Lab H2D',
-      'BBL X1C': 'Bambu Lab X1 Carbon',
-      'BBL X2D': 'Bambu Lab X2D',
-    });
   });
 
   it('resolves models for parsed names', async () => {
@@ -166,6 +152,24 @@ describe('loadSystemIndex on fixtures', () => {
 });
 
 describe('loadSystemIndex edge cases', () => {
+  it('names the real cause when BBL.json exists but cannot be read', async () => {
+    const fs = memFs({ 'system/BBL.json': '{}' });
+    const cause = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    fs.readText = async () => {
+      throw cause;
+    };
+    const err = await loadSystemIndex(fs).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SystemIndexError);
+    expect((err as Error).message).toBe(
+      'Could not read system/BBL.json: EPERM: operation not permitted',
+    );
+    expect((err as Error).cause).toBe(cause);
+    // Missing: the friendly guess, still with its cause.
+    const missing = await loadSystemIndex(memFs()).catch((e: unknown) => e);
+    expect((missing as Error).message).toContain('Is this a Bambu Studio folder');
+    expect((missing as Error).cause).toBeDefined();
+  });
+
   it('throws a plain-English error when BBL.json is missing or invalid', async () => {
     await expect(loadSystemIndex(memFs())).rejects.toThrow(SystemIndexError);
     await expect(loadSystemIndex(memFs())).rejects.toThrow(/Could not read system\/BBL.json/);
@@ -300,10 +304,10 @@ describe('loadSystemIndex edge cases', () => {
       'system/BBL/filament/C.json': preset({ name: 'C', inherits: 'Gone' }),
     });
     const index = await loadSystemIndex(fs);
-    expect((await index.chain('A')).map((p) => p.name)).toEqual(['A', 'B']);
     expect(await index.effectiveCompatiblePrinters('A')).toBeNull();
     expect(index.warnings).toEqual([expect.stringMatching(/inherits loop/)]);
-    expect((await index.chain('C')).map((p) => p.name)).toEqual(['C']);
+    expect(await index.effectiveCompatiblePrinters('C')).toBeNull();
+    expect(index.warnings).toEqual([expect.stringMatching(/inherits loop/)]);
   });
 
   it('uses the nearest compatible_printers and drops non-string items', async () => {
@@ -354,11 +358,11 @@ describe('loadSystemIndex edge cases', () => {
     });
     const index = await loadSystemIndex(fs, { vendor: 'Acme', listKey: 'process_list' });
     expect(index.version).toBeNull();
-    expect((await index.load('P'))?.type).toBe('process');
+    expect((await index.load('P'))?.path).toBe('system/Acme/process/P.json');
   });
 });
 
-// Read-only check against the real install: PRESET_DOCTOR_LIVE=1 npx vitest run systemIndex
+// Read-only check against the real install: npm run test:live -- systemIndex
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live system index', () => {
   const liveRoot = (): string => {
     const appData = process.env['APPDATA'];
@@ -378,15 +382,13 @@ describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live system index', (
     expect(elapsed).toBeLessThan(2000);
   });
 
-  it('derives the printer model map', async () => {
+  it('derives printer models from the data', async () => {
     const index = await loadSystemIndex(nodeFs(liveRoot(), { readOnly: true }));
-    const map = await index.printerModelMap();
-    expect(map.get('BBL X1C')).toBe('Bambu Lab X1 Carbon');
-    expect(map.get('BBL A1M')).toBe('Bambu Lab A1 mini');
-    expect(map.get('BBL H2DP')).toBe('Bambu Lab H2D Pro');
-    expect(map.get('BBL X2D')).toBe('Bambu Lab X2D');
-    expect(map.get('BBL X1')).toBe('Bambu Lab X1');
-    for (const [key, model] of map) expect(model, key).toMatch(/^Bambu Lab /);
+    expect(await index.printerModel('BBL', 'X1C')).toBe('Bambu Lab X1 Carbon');
+    expect(await index.printerModel('BBL', 'A1M')).toBe('Bambu Lab A1 mini');
+    expect(await index.printerModel('BBL', 'H2DP')).toBe('Bambu Lab H2D Pro');
+    expect(await index.printerModel('BBL', 'X2D')).toBe('Bambu Lab X2D');
+    expect(await index.printerModel('BBL', 'X1')).toBe('Bambu Lab X1');
   });
 
   it('confirms the real orphan parent is gone and its replacement exists', async () => {

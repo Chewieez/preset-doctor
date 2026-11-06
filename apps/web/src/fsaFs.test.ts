@@ -79,7 +79,6 @@ describe('fsaFs', () => {
     const fs = fsaFs(root.handle, { readOnly: true });
     await expect(fs.writeText('a.json', 'new')).rejects.toThrow(/Read-only/);
     await expect(fs.mkdir('m')).rejects.toThrow(/Read-only/);
-    await expect(fs.remove('d')).rejects.toThrow(/Read-only/);
     expect(root.text('a.json')).toBe('old');
     expect(root.at('m')).toBeUndefined();
     expect(await fs.readText('a.json')).toBe('old');
@@ -89,17 +88,9 @@ describe('fsaFs', () => {
     const root = fakeFolder('root', { 'file.txt': 'x' });
     const fs = fsaFs(root.handle);
     await expect(fs.readText('no/such.json')).rejects.toSatisfy(isNotFound);
-    await expect(fs.remove('nope')).rejects.toSatisfy(isNotFound);
     expect(await fs.exists('no/such.json')).toBe(false);
     await expect(fs.list('file.txt')).rejects.toThrow(/file where a folder/);
     await expect(fs.mkdir('file.txt')).rejects.toThrow(/file where a folder/);
-  });
-
-  it('never removes the root', async () => {
-    const fs = fsaFs(fakeFolder('root', { 'a.txt': '' }).handle);
-    await expect(fs.remove('')).rejects.toThrow(/root/);
-    await expect(fs.remove('/')).rejects.toThrow(/root/);
-    expect(await fs.exists('a.txt')).toBe(true);
   });
 });
 
@@ -110,6 +101,5 @@ describe('scopedFs', () => {
     await fs.writeText('a.zip', 'z');
     expect(root.text('backups/a.zip')).toBe('z');
     await expect(fs.readText('../top.txt')).rejects.toThrow(/\.\./);
-    await expect(fs.remove?.('')).rejects.toThrow(/root/);
   });
 });

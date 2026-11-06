@@ -3,12 +3,19 @@ import { getInfoValue, serializeInfoFile } from './infoFile.js';
 import { memFs } from './memFs.js';
 import { nodeFs } from './node/nodeFs.js';
 import { fixtureRoot } from './testing/fixtures.js';
-import { listAccounts, scanUser } from './userScan.js';
+import { infoPathFor, listAccounts, scanUser } from './userScan.js';
 
 const BOM = String.fromCharCode(0xfeff);
 const ACCOUNT = '1000000001';
 const fixture = (name: Parameters<typeof fixtureRoot>[0]) =>
   nodeFs(fixtureRoot(name), { readOnly: true });
+
+describe('infoPathFor', () => {
+  it('swaps the .json ending, in any case, for .info', () => {
+    expect(infoPathFor('user/1/filament/A.json')).toBe('user/1/filament/A.info');
+    expect(infoPathFor('user/1/filament/A.JSON')).toBe('user/1/filament/A.info');
+  });
+});
 
 describe('listAccounts', () => {
   it('lists multi-account with most presets first, base/ included (F7)', async () => {
@@ -107,6 +114,32 @@ describe('scanUser on fixtures', () => {
 });
 
 describe('scanUser edge cases', () => {
+  it('records a sidecar that cannot be read instead of failing the scan', async () => {
+    const fs = memFs({
+      'user/1/filament/A.json': '{"name": "A"}',
+      'user/1/filament/A.info': 'base_id = GFSL99_18\n',
+      'user/1/filament/B.json': '{"name": "B"}',
+    });
+    const readText = fs.readText.bind(fs);
+    fs.readText = async (path) => {
+      // Locked by another program, and (as Node reports it) a folder named B.info.
+      if (path === 'user/1/filament/A.info') {
+        throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      }
+      if (path === 'user/1/filament/B.info') {
+        throw Object.assign(new Error('is a directory'), { code: 'EISDIR' });
+      }
+      return readText(path);
+    };
+    const [a, b] = await scanUser(fs, '1');
+    expect(a!.json).toEqual({ name: 'A' });
+    expect(a!.info).toBeUndefined();
+    expect(a!.infoError).toBe('Could not read the sync file: busy');
+    expect(b!.json).toEqual({ name: 'B' });
+    expect(b!.info).toBeUndefined();
+    expect(b!.infoError).toBe('Could not read the sync file: is a directory');
+  });
+
   it('flags JSON that is not an object', async () => {
     const fs = memFs({ 'user/1/filament/Arr.json': '[1,2]', 'user/1/filament/Num.json': '3' });
     const presets = await scanUser(fs, '1');

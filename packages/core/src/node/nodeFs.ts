@@ -6,19 +6,19 @@ import {
   bytesEqual,
   decodeText,
   encodeText,
+  errorMessage,
   normalizePath,
   type DirEntry,
   type PresetFs,
 } from '../fs.js';
 
 export interface NodeFsOptions {
-  /** Every write/mkdir/remove throws. Use for scanning a live folder. */
+  /** Every write/mkdir throws. Use for scanning a live folder. */
   readOnly?: boolean;
 }
 
 export interface NodeFs extends PresetFs {
   readonly root: string;
-  remove(path: string): Promise<void>;
   /** Absolute OS path for a root-relative path. */
   resolve(path: string): string;
 }
@@ -47,7 +47,14 @@ export function nodeFs(rootAbs: string, options: NodeFsOptions = {}): NodeFs {
 
   const writeBytes = async (path: string, data: Uint8Array): Promise<void> => {
     guardWrite(path);
-    const target = resolve(path);
+    // Write through a file symlink to the file it points at: renaming onto the link itself would
+    // replace the link with a plain file and leave the real file (e.g. in OneDrive) unchanged.
+    let target = resolve(path);
+    try {
+      target = await fsp.realpath(target);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
     await fsp.mkdir(nodePath.dirname(target), { recursive: true });
     const tmp = `${target}.preset-doctor-${randomBytes(4).toString('hex')}.tmp`;
     try {
@@ -110,17 +117,13 @@ export function nodeFs(rootAbs: string, options: NodeFsOptions = {}): NodeFs {
       guardWrite(path);
       await fsp.mkdir(resolve(path), { recursive: true });
     },
-    async remove(path) {
-      guardWrite(path);
-      if (normalizePath(path) === '') throw new Error('Refusing to remove the root');
-      await wrapNotFound(path, () => fsp.rm(resolve(path), { recursive: true }));
-    },
   };
 }
 
 /**
- * What a symlink or junction points at. A dangling link holds no data, so it is left out (null);
- * any other failure (e.g. EPERM) is thrown, so nothing reachable is silently skipped.
+ * What a symlink or junction points at. A dangling link, or one to something that is neither a
+ * file nor a folder, holds no preset data and is left out (null); any other failure is thrown
+ * with the link named, so nothing reachable is silently skipped.
  */
 async function linkTargetKind(abs: string): Promise<'file' | 'dir' | null> {
   let st;
@@ -129,7 +132,11 @@ async function linkTargetKind(abs: string): Promise<'file' | 'dir' | null> {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT' || code === 'ENOTDIR') return null;
-    throw err;
+    throw new Error(
+      `Can't follow the link ${abs} (${code ?? errorMessage(err)}). Is the folder or drive it ` +
+        'points to (OneDrive, another drive) available?',
+      { cause: err },
+    );
   }
   return st.isDirectory() ? 'dir' : st.isFile() ? 'file' : null;
 }

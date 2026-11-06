@@ -35,7 +35,7 @@ Either way, the core library and CLI come first and don't change.
 
 **Result (Nov 5, 2026): blocked. Decision: 7b (desktop app).** Chromium's File System Access blocklist includes `DIR_ROAMING_APP_DATA` (`%APPDATA%`) with `kBlockAllChildren`, so `%APPDATA%` and every folder under it are refused by `showDirectoryPicker()`, including `%APPDATA%\BambuStudio`, `...\user` and `...\system`. Source: `chrome/browser/file_system_access/chrome_file_system_access_permission_context.cc` (the blocked-paths list). Consequence: `apps/desktop` (Electron + React via electron-vite, packaged with electron-builder as a portable unsigned Windows exe, released on GitHub Releases) is the main form, because it repairs in place.
 
-**Update: both forms ship, with the same UI.** `apps/web` (GitHub Pages) works on a **copy**: the user copies `system`, `user` and `BambuStudio.conf` out of `%APPDATA%\BambuStudio` into a normal folder (e.g. `Documents\PresetDoctor-copy`), picks that folder, repairs it, and copies `user` back. The page lists exactly which files changed. This is still not the zip-upload fallback ruled out above: nothing is uploaded, and it edits real files in place on the copy. Use the desktop app for one-click, in-place repairs; use the web version when you can't or won't run an unsigned exe.
+**Update: both forms ship, with the same UI.** `apps/web` (GitHub Pages) works on a **copy**: the user copies `system`, `user` and `BambuStudio.conf` out of `%APPDATA%\BambuStudio` into a normal folder (e.g. `Documents\PresetDoctor-copy`), picks that folder, repairs it, and copies the changed files (listed on the page) back. This is still not the zip-upload fallback ruled out above: nothing is uploaded, and it edits real files in place on the copy. Use the desktop app for one-click, in-place repairs; use the web version when you can't or won't run an unsigned exe.
 
 ## 3. Decisions
 
@@ -85,7 +85,7 @@ JSON parse failure, missing `name`, `name` different from the filename stem, or 
 ## 6. Safety (non-negotiable)
 
 - Never write while Bambu Studio is running. Desktop: detect `bambu-studio.exe`. Web: can't detect it, so show a required "I've closed Bambu Studio" checkbox before the Fix button enables.
-- Before the first write of a session, back up the whole `user\` folder. Desktop: zip to `%APPDATA%\PresetDoctor\backups\<timestamp>.zip`. Web: copy it to `user_backup_<timestamp>\` next to `user\` (and offer a zip download). One-click restore.
+- Before the first write of a session, back up the whole `user\` folder. Desktop: zip to `%APPDATA%\PresetDoctor\backups\<timestamp>.zip`. Web: the same zip, written to `preset-doctor-backups\` inside the picked folder (and offered as a download). Restore from a list of backups (the current state is backed up first).
 - Show a diff of every proposed change. Nothing is written without an explicit click.
 - Write safely (temp file then rename on desktop; write-then-verify on web). Preserve key order and 4-space indentation so diffs stay small.
 - No network calls of any kind. Say so in the UI.
@@ -107,7 +107,7 @@ apps/web/   (7a)      Vite + React, File System Access API adapter for the core 
 apps/desktop/ (7b)    Electron + React, node fs adapter, thin UI over core via IPC, in place
 ```
 
-Both are built (see §2): `apps/desktop` repairs the real folder in place; `apps/web` repairs a copy the user picks, and the user copies `user` back. They share one UI in `packages/ui` (the screen plus the `PresetDoctorApi` contract); `AppConfig.platform` switches the few differences (Studio process check vs. a required "I've closed Bambu Studio" checkbox, open-backups-folder vs. download, the copy-out/copy-back guide).
+Both are built (see §2): `apps/desktop` repairs the real folder in place; `apps/web` repairs a copy the user picks, and the user copies the changed files (listed on the page) back. They share one UI in `packages/ui` (the screen plus the `PresetDoctorApi` contract); `AppConfig.platform` switches the few differences (Studio process check vs. a required "I've closed Bambu Studio" checkbox, open-backups-folder vs. download, the copy-out/copy-back guide).
 
 ## 8. UI (one screen)
 
@@ -115,7 +115,7 @@ Both are built (see §2): `apps/desktop` repairs the real folder in place; `apps
 2. **Scan** button, then a table: preset name, status (OK / Hidden / Broken), reason.
 3. Row click opens a detail panel: explanation, proposed fix, JSON diff, candidate picker for R1.
 4. **Fix selected**: backup, apply, result summary.
-5. Footer: **Restore backup**, "No data leaves your computer," not-affiliated disclaimer, donation link.
+5. Footer: **Restore a backup…**, "No data leaves your computer," not-affiliated disclaimer, donation link.
 
 ## 9. Milestones
 

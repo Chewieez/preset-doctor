@@ -12,5 +12,4 @@ apps/desktop/release/
 # Fixtures go through scripts/make-fixtures.ts, which anonymizes them.
 /real/
 /live-copy/
-**/user_backup_*/
 preset-doctor-test.txt

@@ -6,10 +6,16 @@
   "description": "The Preset Doctor screen (React), shared by the desktop app and the web version.",
   "exports": {
     ".": "./src/index.ts",
-    "./contract": "./src/contract.ts"
+    "./contract": "./src/contract.ts",
+    "./links": "./src/links.ts",
+    "./service": "./src/service.ts"
   },
   "peerDependencies": {
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
   }
 }

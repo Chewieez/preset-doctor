@@ -17,3 +17,4 @@ export * from './rules/r1.js';
 export * from './rules/r4.js';
 export * from './scan.js';
 export * from './fix.js';
+export * from './diff.js';

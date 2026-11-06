@@ -92,7 +92,7 @@ export function FindingsTable(props: Props) {
                     tabIndex={0}
                     data-testid="preset-row"
                     data-status={p.status}
-                    aria-selected={p.path === selectedPath}
+                    aria-current={p.path === selectedPath ? 'true' : undefined}
                   >
                     <td className="col-check" onClick={(e) => e.stopPropagation()}>
                       {fixable && (

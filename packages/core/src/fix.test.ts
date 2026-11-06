@@ -5,10 +5,10 @@ import {
   ApplyError,
   applyChanges,
   defaultChoices,
+  findStale,
   FixError,
   planFixes,
   StaleChangeError,
-  unifiedDiff,
 } from './fix.js';
 import type { PresetFs } from './fs.js';
 import { memFs } from './memFs.js';
@@ -42,12 +42,12 @@ describe('planFixes', () => {
     const fs = nodeFs(fixtureRoot('broken-r1'), { readOnly: true });
     const r = await scan(fs);
     const choices = defaultChoices(r);
-    expect(choices).toHaveLength(20);
+    expect(choices).toHaveLength(19);
     const changes = await planFixes(fs, r, choices);
 
     const json = changes.filter((c) => c.path.endsWith('.json'));
     const info = changes.filter((c) => c.path.endsWith('.info'));
-    expect(json).toHaveLength(20);
+    expect(json).toHaveLength(19);
     for (const c of json) expect(changedLines(c.before, c.after)).toHaveLength(1);
 
     const petg = json.find((c) => c.path.endsWith('/Anycubic Petg 06.json'))!;
@@ -61,10 +61,10 @@ describe('planFixes', () => {
       'Set its parent to "Generic PETG @BBL X2D" (was "Generic PETG @BBL X2D 0.6 nozzle").',
     );
 
-    // Only the two synthetic presets with a pre-selected fix have sidecars.
+    // Of the pre-selected fixes, only Synthetic Added Suffix has a sidecar. (Synthetic Stripped
+    // Suffix has one too, but its nozzle size is unsure, so nothing is pre-selected for it.)
     expect(info.map((c) => c.path.slice(c.path.lastIndexOf('/') + 1))).toEqual([
       'Synthetic Added Suffix.info',
-      'Synthetic Stripped Suffix.info',
     ]);
     const added = info[0]!;
     expect(changedLines(added.before, added.after)).toEqual([
@@ -230,6 +230,31 @@ describe('planFixes', () => {
   });
 });
 
+describe('findStale', () => {
+  it('lists planned files that changed or are gone, by bytes', async () => {
+    const fs = memFs({ 'a.json': 'same', 'b.json': 'edited', 'c.json': 'same' });
+    const change = (path: string): Change => ({
+      path,
+      before: 'same',
+      after: 'x',
+      description: '',
+    });
+    const changes = ['a.json', 'b.json', 'c.json', 'gone.json'].map(change);
+    expect(await findStale(fs, changes)).toEqual(['b.json', 'gone.json']);
+    expect(await findStale(fs, [change('a.json')])).toEqual([]);
+  });
+
+  it('rethrows read errors other than not-found', async () => {
+    const fs = memFs({ 'a.json': 'same' });
+    fs.readBytes = async () => {
+      throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+    };
+    await expect(
+      findStale(fs, [{ path: 'a.json', before: 'same', after: 'x', description: '' }]),
+    ).rejects.toThrow('busy');
+  });
+});
+
 describe('applyChanges', () => {
   it('fixes broken-r1 on a temp copy; a rescan finds only the presets without a sure fix', async () => {
     const dir = temp('broken-r1');
@@ -237,25 +262,34 @@ describe('applyChanges', () => {
     const r = await scan(fs);
     const changes = await planFixes(fs, r, defaultChoices(r));
     const { written } = await applyChanges(fs, changes);
-    expect(written).toHaveLength(22);
+    expect(written).toHaveLength(20);
 
     const again = await scan(fs);
     const left = again.findings.filter((f) => f.ruleId === R1_ID).map((f) => f.presetName);
-    expect(left).toEqual(['Synthetic No Candidates', 'Synthetic Other Printer Only']);
+    expect(left).toEqual([
+      'Synthetic No Candidates',
+      'Synthetic Other Printer Only',
+      'Synthetic Stripped Suffix',
+    ]);
+
+    // Choosing by hand fixes the other two: the low-confidence candidate, and the 0.4 nozzle
+    // preset for the one whose nozzle size is unsure (which also updates its base_id).
+    const other = again.findings.find((f) => f.presetName === 'Synthetic Other Printer Only')!;
+    const pick =
+      other.proposedFix?.kind === 'setInherits' ? other.proposedFix.candidates[0] : undefined;
+    const stripped = again.findings.find((f) => f.presetName === 'Synthetic Stripped Suffix')!;
+    await applyChanges(
+      fs,
+      await planFixes(fs, again, [
+        { presetPath: other.presetPath, candidateName: pick!.name },
+        { presetPath: stripped.presetPath, candidateName: 'Bambu PLA Basic @BBL X2D 0.4 nozzle' },
+      ]),
+    );
     expect(
       readFileSync(join(dir, 'user/1000000001/filament/Synthetic Stripped Suffix.info'), 'utf8'),
     ).toBe(
       'sync_info = \r\nuser_id = 1000000001\r\nsetting_id = PFUSc12a29cdb2a4af\r\n' +
         'base_id = GFSA00_08\r\nupdated_time = 1782278409\r\n',
-    );
-
-    // Choosing the low-confidence candidate by hand fixes the last fixable one.
-    const other = again.findings.find((f) => f.presetName === 'Synthetic Other Printer Only')!;
-    const pick =
-      other.proposedFix?.kind === 'setInherits' ? other.proposedFix.candidates[0] : undefined;
-    await applyChanges(
-      fs,
-      await planFixes(fs, again, [{ presetPath: other.presetPath, candidateName: pick!.name }]),
     );
     const last = (await scan(fs)).findings.filter((f) => f.ruleId === R1_ID);
     expect(last.map((f) => f.presetName)).toEqual(['Synthetic No Candidates']);
@@ -327,59 +361,5 @@ describe('applyChanges', () => {
     const r = await scan(fs);
     const changes = await planFixes(fs, r, defaultChoices(r));
     await expect(applyChanges(fs, changes)).rejects.toThrow(ApplyError);
-  });
-});
-
-describe('unifiedDiff', () => {
-  const change = (before: string, after: string): Change => ({
-    path: 'p.json',
-    before,
-    after,
-    description: '',
-  });
-  const lines = (n: number) => Array.from({ length: n }, (_, i) => `l${i + 1}`);
-
-  it('shows a one-line change with three lines of context', () => {
-    const a = lines(10);
-    const b = [...a];
-    b[4] = 'L5';
-    expect(unifiedDiff(change(a.join('\n'), b.join('\n')))).toBe(
-      [
-        '--- a/p.json',
-        '+++ b/p.json',
-        '@@ -2,7 +2,7 @@',
-        ' l2',
-        ' l3',
-        ' l4',
-        '-l5',
-        '+L5',
-        ' l6',
-        ' l7',
-        ' l8',
-      ].join('\n'),
-    );
-  });
-
-  it('splits distant changes into separate hunks and merges close ones', () => {
-    const a = lines(30);
-    const far = [...a];
-    far[1] = 'X';
-    far[25] = 'Y';
-    expect(unifiedDiff(change(a.join('\n'), far.join('\n'))).match(/^@@/gm)).toHaveLength(2);
-    const near = [...a];
-    near[1] = 'X';
-    near[6] = 'Y';
-    expect(unifiedDiff(change(a.join('\n'), near.join('\n'))).match(/^@@/gm)).toHaveLength(1);
-  });
-
-  it('handles insertions, deletions and CRLF', () => {
-    expect(unifiedDiff(change('a\r\nb\r\n', 'a\r\nb\r\nc\r\n'))).toBe(
-      '--- a/p.json\n+++ b/p.json\n@@ -1,2 +1,3 @@\n a\n b\n+c',
-    );
-    expect(unifiedDiff(change('a\nb', 'b'))).toBe(
-      '--- a/p.json\n+++ b/p.json\n@@ -1,2 +1,1 @@\n-a\n b',
-    );
-    expect(unifiedDiff(change('', 'x'))).toBe('--- a/p.json\n+++ b/p.json\n@@ -0,0 +1,1 @@\n+x');
-    expect(unifiedDiff(change('same', 'same'))).toBe('--- a/p.json\n+++ b/p.json');
   });
 });

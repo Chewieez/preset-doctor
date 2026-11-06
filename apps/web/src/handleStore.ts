@@ -48,17 +48,6 @@ export function indexedDbHandleStore(): HandleStore {
   };
 }
 
-export function memoryHandleStore(initial: FileSystemDirectoryHandle | null = null): HandleStore {
-  let stored = initial;
-  return {
-    load: () => Promise.resolve(stored),
-    save: (h) => {
-      stored = h;
-      return Promise.resolve();
-    },
-  };
-}
-
 function open(): Promise<IDBDatabase> {
   const req = indexedDB.open(DB_NAME, 1);
   req.onupgradeneeded = () => req.result.createObjectStore(STORE);

@@ -6,12 +6,17 @@ import { Dialog } from './Dialog';
 interface Props {
   platform: Platform;
   root: string;
+  /** Web: the folder inside `root` that holds the backups. */
+  backupsDir: string;
   studio: StudioState | 'checking';
   /** Web: the "I've closed Bambu Studio" checkbox, which stands in for the process check. */
   studioGate?: ReactNode;
   onRestored: (backupId: string, restoredCount: number) => void;
-  /** The restore wrote some files and then failed; the message names the backup that undoes it. */
-  onRestoreStopped: (message: string) => void;
+  /**
+   * The restore wrote some files (`written`) and then failed; the message names the backup that
+   * undoes it.
+   */
+  onRestoreStopped: (message: string, written: readonly string[]) => void;
   onClose: () => void;
 }
 
@@ -24,6 +29,7 @@ const REASON: Record<NonNullable<BackupInfo['reason']>, string> = {
 export function BackupsDialog({
   platform,
   root,
+  backupsDir,
   studio,
   studioGate,
   onRestored,
@@ -52,7 +58,7 @@ export function BackupsDialog({
       if (e instanceof AppError && e.code === 'other-source') {
         setOtherSource({ id, message: e.message });
       } else if (e instanceof AppError && e.code === 'partial') {
-        onRestoreStopped(e.message);
+        onRestoreStopped(e.message, e.written ?? []);
         return;
       } else {
         setError(messageOf(e));
@@ -100,12 +106,12 @@ export function BackupsDialog({
       </p>
       {web && (
         <p className="muted">
-          Backups are saved in the <code>preset-doctor-backups</code> folder inside{' '}
-          <code>{root}</code>. Download one to keep a copy somewhere else.
+          Backups are saved in the <code>{backupsDir}</code> folder inside <code>{root}</code>.
+          Download one to keep a copy somewhere else.
         </p>
       )}
       {studioGate}
-      {studio !== 'closed' && studioGate === undefined && (
+      {!web && studio !== 'closed' && (
         <p className="warn-text">Close Bambu Studio to restore a backup.</p>
       )}
       {error && <p className="error-text">{error}</p>}

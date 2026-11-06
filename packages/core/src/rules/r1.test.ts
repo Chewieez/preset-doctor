@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { PresetFs } from '../fs.js';
 import { scan } from '../scan.js';
-import { fakeStudio, type FakeSystemPreset } from '../testing/studio.js';
+import { defaultPaths } from '../node/studioProcess.js';
+import { loadSystemCopy, simulateR1 } from '../testing/r1Simulation.js';
+import { fakeStudio, sidecar, type FakeSystemPreset } from '../testing/studio.js';
 import type { Candidate, Finding } from '../types.js';
 import { R1_ID } from './r1.js';
 
@@ -60,7 +62,8 @@ describe('R1 candidate ranking', () => {
     );
   });
 
-  it('defaults to the 0.4 nozzle when the name has no suffix', async () => {
+  it('defaults to 0.4 for a name without a size when the profile has nothing to learn from', async () => {
+    // No unsuffixed X2D preset here says what such names mean; see 'R1 nozzle evidence'.
     const fs = fakeStudio(
       [
         { name: 'Foo @BBL X2D 0.4 nozzle', compatible_printers: [X2D('0.4')] },
@@ -312,4 +315,191 @@ describe('R1 chains', () => {
     expect(result.findings.filter((f) => f.ruleId === R1_ID)).toEqual([]);
     expect(result.warnings.join(' ')).toContain("Missing parent presets can't be checked");
   });
+});
+
+describe('R1 nozzle evidence', () => {
+  // In 02.08.00.06 every unsuffixed X2D preset is for the 0.6/0.8 nozzle.
+  const X2D_PLAIN: FakeSystemPreset = {
+    name: 'Other @BBL X2D',
+    compatible_printers: [X2D('0.6'), X2D('0.8')],
+  };
+  const FOO: FakeSystemPreset[] = [
+    X2D_PLAIN,
+    { name: 'Foo @BBL X2D 0.4 nozzle', compatible_printers: [X2D('0.4')], setting_id: 'F04' },
+    { name: 'Foo @BBL X2D 0.6 nozzle', compatible_printers: [X2D('0.6')], setting_id: 'F06' },
+    { name: 'Foo @BBL X1C', compatible_printers: ['Bambu Lab X1 Carbon 0.4 nozzle'] },
+  ];
+
+  it('asks for the nozzle when a name without a size can mean several on that printer', async () => {
+    const fs = fakeStudio(FOO, [{ name: 'Mine', inherits: 'Foo @BBL X2D' }]);
+    const [f] = await r1(fs);
+    const cs = candidates(f);
+    expect(summary(cs)).toEqual([
+      'medium Foo @BBL X2D 0.4 nozzle',
+      'medium Foo @BBL X2D 0.6 nozzle',
+      'low Foo @BBL X1C',
+    ]);
+    expect(cs[0]?.reason).toBe('Same filament and printer, for the 0.4 mm nozzle.');
+    expect(f?.explanation).toBe(
+      'This preset is based on "Foo @BBL X2D", which no longer exists in Bambu Studio\'s system ' +
+        "presets (version 02.08.00.06), so Studio hides it. Its name doesn't include a nozzle " +
+        'size, and on the Bambu Lab X2D presets named that way are for different nozzles, so ' +
+        "Preset Doctor can't tell which nozzle it was for. Pick the preset for the nozzle you " +
+        'print with.',
+    );
+  });
+
+  it('does the same for a wizard-style name of that printer', async () => {
+    const fs = fakeStudio(FOO, [{ name: 'Mine', inherits: 'Foo @Bambu Lab X2D' }]);
+    const [f] = await r1(fs);
+    expect(summary(candidates(f)).slice(0, 2)).toEqual([
+      'medium Foo @BBL X2D 0.4 nozzle',
+      'medium Foo @BBL X2D 0.6 nozzle',
+    ]);
+    expect(f?.explanation).toContain("can't tell which nozzle it was for");
+  });
+
+  it('still pre-selects a preset that covers every size the name could mean', async () => {
+    const fs = fakeStudio(
+      [
+        X2D_PLAIN,
+        {
+          name: 'Foo @BBL X2D 0.4 nozzle',
+          compatible_printers: [X2D('0.4'), X2D('0.6'), X2D('0.8')],
+        },
+        { name: 'Foo @BBL X2D 0.6 nozzle', compatible_printers: [X2D('0.6')] },
+      ],
+      [{ name: 'Mine', inherits: 'Foo @BBL X2D' }],
+    );
+    const [f] = await r1(fs);
+    const cs = candidates(f);
+    expect(summary(cs)).toEqual([
+      'high* Foo @BBL X2D 0.4 nozzle',
+      'medium Foo @BBL X2D 0.6 nozzle',
+    ]);
+    expect(cs[0]?.reason).toBe(
+      "Bambu's current preset for the Bambu Lab X2D, for every nozzle that name could mean " +
+        '(0.4, 0.6 and 0.8 mm).',
+    );
+    expect(f?.explanation).toContain(
+      'which Bambu now uses for all of the 0.4, 0.6 and 0.8 mm nozzles.',
+    );
+  });
+
+  it('counts every size the printer takes, not just those of unsuffixed presets', async () => {
+    // A renamed preset may have been for the 0.2 nozzle, which no unsuffixed preset covers.
+    const fs = fakeStudio(
+      [
+        X2D_PLAIN,
+        { name: 'Bar @BBL X2D 0.2 nozzle', compatible_printers: [X2D('0.2')] },
+        {
+          name: 'Foo @BBL X2D 0.4 nozzle',
+          compatible_printers: [X2D('0.4'), X2D('0.6'), X2D('0.8')],
+        },
+      ],
+      [{ name: 'Mine', inherits: 'Foo @BBL X2D' }],
+    );
+    expect(summary(candidates((await r1(fs))[0]))).toEqual(['medium Foo @BBL X2D 0.4 nozzle']);
+  });
+
+  it('follows the profile when every unsuffixed preset of the printer is for 0.4 alone', async () => {
+    const Q1 = (n: string) => `Bambu Lab Q1 ${n} nozzle`;
+    const fs = fakeStudio(
+      [
+        { name: 'Other @BBL Q1', compatible_printers: [Q1('0.4')] },
+        { name: 'Foo @BBL Q1 0.4 nozzle', compatible_printers: [Q1('0.4')] },
+        { name: 'Foo @BBL Q1 0.6 nozzle', compatible_printers: [Q1('0.6')] },
+      ],
+      [{ name: 'Mine', inherits: 'Foo @BBL Q1' }],
+    );
+    expect(summary(candidates((await r1(fs))[0]))).toEqual([
+      'high* Foo @BBL Q1 0.4 nozzle',
+      'medium Foo @BBL Q1 0.6 nozzle',
+    ]);
+  });
+
+  it('does not trust the " 0.4 nozzle" toggle where plain names are for other sizes', async () => {
+    // "Foo @BBL X2D" has no compatible_printers, and plain X2D names are for 0.6/0.8.
+    const fs = fakeStudio(
+      [X2D_PLAIN, { name: 'Foo @BBL X2D' }],
+      [{ name: 'Mine', inherits: 'Foo @BBL X2D 0.4 nozzle' }],
+    );
+    const cs = candidates((await r1(fs))[0]);
+    expect(summary(cs)).toEqual(['medium Foo @BBL X2D']);
+    expect(cs[0]?.reason).toBe(
+      "Same filament and printer; Preset Doctor couldn't tell which nozzle it is for.",
+    );
+  });
+
+  it('pre-selects the high candidate the sidecar base_id names, among several', async () => {
+    const fs = fakeStudio(
+      [
+        { name: 'Baz @BBL X2D', compatible_printers: [X2D('0.4'), X2D('0.6')], setting_id: 'B1' },
+        { name: 'Baz @BBL X2D 0.6 nozzle', compatible_printers: [X2D('0.6')], setting_id: 'B2' },
+      ],
+      [{ name: 'Mine', inherits: 'Baz @BBL X2D 0.60 nozzle', info: sidecar('B2') }],
+    );
+    const [f] = await r1(fs);
+    const cs = candidates(f);
+    expect(summary(cs)).toEqual(['high Baz @BBL X2D', 'high* Baz @BBL X2D 0.6 nozzle']);
+    expect(cs[1]?.reason).toBe(
+      "Bambu's current preset for the Bambu Lab X2D with a 0.60 mm nozzle. Your preset's sync " +
+        'file (.info) also names it.',
+    );
+    expect(f?.explanation).toContain(
+      '2 presets look like good replacements; "Baz @BBL X2D 0.6 nozzle" is pre-selected because ' +
+        "your preset's sync file (.info) names it.",
+    );
+  });
+
+  it('never lets base_id alone pick the nozzle, but lists its preset first', async () => {
+    const fs = fakeStudio(FOO, [{ name: 'Mine', inherits: 'Foo @BBL X2D', info: sidecar('F06') }]);
+    const [f] = await r1(fs);
+    const cs = candidates(f);
+    expect(summary(cs).slice(0, 2)).toEqual([
+      'medium Foo @BBL X2D 0.6 nozzle',
+      'medium Foo @BBL X2D 0.4 nozzle',
+    ]);
+    expect(cs[0]?.reason).toBe(
+      "Your preset's sync file (.info) says it was made from this preset, which is for the 0.6 " +
+        'mm nozzle. That file is not always right, so check it matches your nozzle.',
+    );
+    expect(f?.explanation).toContain("can't tell which nozzle it was for");
+  });
+
+  it('ignores a base_id that contradicts the name, or names another filament', async () => {
+    // Real sidecars sometimes name the 0.4 sibling of a 0.6 preset's parent.
+    const sibling = fakeStudio(PETG, [
+      { name: 'Mine', inherits: 'Generic PETG @BBL X2D 0.6 nozzle', info: sidecar('G15') },
+    ]);
+    const cs = candidates((await r1(sibling))[0]);
+    expect(summary(cs)[0]).toBe('high* Generic PETG @BBL X2D');
+    expect(cs.find((c) => c.name === 'Generic PETG @BBL X2D 0.4 nozzle')?.reason).toBe(
+      'Same filament and printer, but for the 0.4 mm nozzle.',
+    );
+
+    const otherStem = fakeStudio(
+      [...FOO, { name: 'Generic PETG @BBL X2D 0.4 nozzle', setting_id: 'G15' }],
+      [{ name: 'Mine', inherits: 'Foo @BBL X2D', info: sidecar('G15') }],
+    );
+    const found = candidates((await r1(otherStem))[0]);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every((c) => !c.preselected && !c.reason.includes('sync file'))).toBe(true);
+  });
+});
+
+// Read-only, on an in-memory copy of the real system presets:
+// npm run test:live -- r1 (same numbers as `node scripts/r1-simulate.ts`).
+describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live R1 simulation (read-only)', () => {
+  it('never pre-selects a preset for the wrong nozzle', async () => {
+    const result = await simulateR1(await loadSystemCopy(defaultPaths().studioRoot));
+    expect(result.wrong).toEqual([]);
+    expect(result.rows).toHaveLength(16);
+    // Still repairs the real-world case: a suffixed name whose preset Bambu renamed.
+    for (const row of result.rows.filter((r) => r.kind === 'renamed' && r.mode === 'suffixed')) {
+      const total = Object.values(row.counts).reduce((a, b) => a + b, 0);
+      expect(row.counts.correct).toBeGreaterThan(0);
+      expect(row.counts.correct).toBe(total);
+    }
+  }, 300_000);
 });

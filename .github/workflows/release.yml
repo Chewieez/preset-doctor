@@ -9,14 +9,22 @@ on:
 permissions: {}
 
 jobs:
+  # Everything CI checks (lint, format, typecheck, tests, both e2e suites), so a tag on a commit
+  # that fails CI never becomes a release.
+  checks:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   # Builds and tests with a read-only token that isn't left in .git/config, so code run by
   # npm ci or the build can't push to the repo or touch releases.
   build:
+    needs: checks
     runs-on: windows-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # The exe name and the in-app version come from package.json; a tag without a matching
@@ -32,9 +40,9 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -43,28 +51,44 @@ jobs:
       - run: npm run desktop:dist
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - uses: actions/upload-artifact@v4
+      # Launches what ships (the portable target builds win-unpacked first), not just out/: catches
+      # files missing from the package, a broken preload or a CSP that blocks the bundle.
+      - name: Smoke-test the packaged exe
+        run: node apps/desktop/e2e/smoke.mts
+        env:
+          # Absolute: playwright resolves executablePath against the working directory.
+          PRESET_DOCTOR_E2E_EXE: '${{ github.workspace }}\apps\desktop\release\win-unpacked\Preset Doctor.exe'
+      - uses: actions/upload-artifact@v7
         with:
           name: portable-exe
           path: apps/desktop/release/*.exe
           if-no-files-found: error
 
-  # Publishes with the preinstalled gh CLI: no checkout, no npm, no third-party action.
+  # Publishes with the preinstalled gh CLI and GitHub's own actions: no checkout, no npm.
   publish:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: portable-exe
           path: dist
+      # Lets anyone check the unsigned exe was built here: gh attestation verify <exe> -R <repo>.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*.exe
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum *.exe > SHA256SUMS.txt
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*.exe
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt
           --repo "$GITHUB_REPOSITORY"
           --title "$GITHUB_REF_NAME"
           --generate-notes

@@ -5,16 +5,18 @@ interface Props {
   count: number;
   studio: StudioState | 'checking';
   busy: boolean;
-  /** Web: the "I've closed Bambu Studio" checkbox, which stands in for the process check. */
+  /** Web: the user's tick stands in for the process check, so ask for it. */
+  confirmToWrite: boolean;
+  /** Web: the "I've closed Bambu Studio" checkbox. */
   studioGate?: ReactNode;
   onFix: () => void;
 }
 
-export function FixBar({ count, studio, busy, studioGate, onFix }: Props) {
+export function FixBar({ count, studio, busy, confirmToWrite, studioGate, onFix }: Props) {
   const blocked =
     studio === 'closed'
       ? null
-      : studioGate !== undefined
+      : confirmToWrite
         ? 'Close Bambu Studio, then tick the box to repair presets.'
         : studio === 'running'
           ? 'Close Bambu Studio to repair presets. Preset Doctor notices within a few seconds.'

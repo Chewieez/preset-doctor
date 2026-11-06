@@ -3,6 +3,7 @@ import type { PlannedChange } from '../contract';
 import {
   CLOUD_SYNC_RULE,
   displayName,
+  hasFix,
   orderFindings,
   type PresetFixes,
   type Selection,
@@ -46,7 +47,7 @@ export function DetailPanel({
   const pick = selection.picks[path];
   const checked = Boolean(selection.checked[path]);
   const [main, ...notes] = orderFindings(findings.filter((f) => f.ruleId !== CLOUD_SYNC_RULE));
-  const fixable = fixes.candidates !== undefined || fixes.rename !== undefined;
+  const fixable = hasFix(fixes);
   const radioName = `candidate-${path}`;
 
   return (

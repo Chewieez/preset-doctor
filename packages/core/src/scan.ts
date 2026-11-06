@@ -10,17 +10,18 @@ import type { RuleContext } from './rules/context.js';
 import { checkR1, displayName, R1_ID, userCandidateNames } from './rules/r1.js';
 import { checkR4 } from './rules/r4.js';
 import { loadSystemIndexes, SystemIndexError, type SystemIndex } from './systemIndex.js';
-import type {
-  Finding,
-  PresetStatus,
-  PresetSummary,
-  ScanResult,
-  Severity,
-  UserPreset,
+import {
+  RULE_IDS,
+  type Finding,
+  type PresetStatus,
+  type PresetSummary,
+  type ScanResult,
+  type Severity,
+  type UserPreset,
 } from './types.js';
 import { listAccounts, scanUser } from './userScan.js';
 
-export const R5_ID = 'R5_CLOUD_SYNC';
+export const R5_ID = RULE_IDS.cloudSync;
 
 export interface ScanOptions {
   /** Account folder to scan. Default: the one with the most presets. */
@@ -71,6 +72,13 @@ export async function scan(fs: PresetFs, options: ScanOptions = {}): Promise<Sca
 
   const conf = await readStudioConf(fs);
   if (conf.syncUserPreset === true) findings.push(cloudSyncFinding());
+  else if (conf.error !== undefined && conf.syncUserPreset === undefined) {
+    // Sync may well be on: say so, rather than staying as quiet as when it is off.
+    warnings.push(
+      `${conf.error} Preset Doctor could not tell whether cloud preset sync is on; turn it off ` +
+        'in Bambu Studio before repairing.',
+    );
+  }
 
   const ctx: RuleContext | null = system
     ? { system, presets, resolve: { system, userByName: buildUserIndex(presets) } }
@@ -148,6 +156,7 @@ function summarize(
   const summary: PresetSummary = {
     accountId: preset.accountId,
     path: preset.path,
+    fileStem: preset.fileStem,
     isBase: preset.isBase,
     status: unchecked ? 'info' : (worst?.status ?? 'ok'),
     reason: unchecked

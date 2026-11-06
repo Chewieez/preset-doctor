@@ -35,7 +35,7 @@ H2D, X1C, X2D, plus their full `inherits` and `include` chains
 `machine_list` and `process_list` are empty. Every `filament_list` entry has its file.
 
 Note: in this profile version the X2D preset without a nozzle suffix (e.g. `Generic PETG @BBL X2D`)
-is the 0.6/0.8 nozzle variant, while X1C's unsuffixed preset is the 0.4 variant. Resolve
+is the 0.6/0.8 nozzle variant, while X1C's unsuffixed preset usually covers 0.4. Resolve
 compatibility through the inherit chain; `fdm_filament_common` has `compatible_printers: []`.
 
 ## healthy/
@@ -57,14 +57,16 @@ R5_CLOUD_SYNC warning.
 - `Anycubic Petg.json` (healthy, with sidecar): parent of the user-parent case.
 - Synthetic presets, built from `Anycubic Petg.json` by changing only `name`, `inherits` and
   `filament_settings_id[0]`; each has a sidecar with `base_id = GFSG99_15` (copied from the template):
-- `Synthetic Stripped Suffix.json` inherits `Bambu PLA Basic @BBL X2D`: suffix stripped where the system name needs " 0.4 nozzle".
+- `Synthetic Stripped Suffix.json` inherits `Bambu PLA Basic @BBL X2D`: no nozzle size in the name, where every unsuffixed X2D preset is for 0.6/0.8, so the size is unsure and nothing is pre-selected (see the note below the table).
 - `Synthetic Added Suffix.json` inherits `Bambu ABS @BBL X1C 0.4 nozzle`: suffix added where the system name (X1C) has none.
 - `Synthetic Other Printer Only.json` inherits `Overture PLA @BBL X2D 0.4 nozzle`: stem exists only for other printers (low tier).
 - `Synthetic No Candidates.json` inherits `Unobtainium Filament @BBL X2D 0.4 nozzle`: stem exists nowhere (no candidates).
 - `Synthetic User Child.json` inherits `Anycubic Petg`: parent is another user preset that exists (healthy).
 
 Expected R1 findings (computed by the generator: same stem and printer, high when the resolved
-`compatible_printers` contains "<model> <nozzle from the name, default 0.4> nozzle"):
+`compatible_printers` contains "<model> <nozzle from the name> nozzle". A name without a size
+means 0.4 only if every unsuffixed preset for that printer is 0.4-only; otherwise nothing is
+pre-selected and the user picks):
 
 | Preset file | Missing parent (`inherits`) | Same-printer system variants (resolved `compatible_printers`) | Expected high candidate |
 |---|---|---|---|
@@ -86,10 +88,19 @@ Expected R1 findings (computed by the generator: same stem and printer, high whe
 | Overture ASA 06.json | Generic ASA @BBL X2D 0.6 nozzle | Generic ASA @BBL X2D (Bambu Lab X2D 0.6 nozzle, Bambu Lab X2D 0.8 nozzle)<br>Generic ASA @BBL X2D 0.2 nozzle (Bambu Lab X2D 0.2 nozzle)<br>Generic ASA @BBL X2D 0.4 nozzle (Bambu Lab X2D 0.4 nozzle) | Generic ASA @BBL X2D |
 | ProtoPast htpla 06.json | Generic PLA @BBL X2D 0.6 nozzle | Generic PLA @BBL X2D (Bambu Lab X2D 0.6 nozzle, Bambu Lab X2D 0.8 nozzle)<br>Generic PLA @BBL X2D 0.2 nozzle (Bambu Lab X2D 0.2 nozzle)<br>Generic PLA @BBL X2D 0.4 nozzle (Bambu Lab X2D 0.4 nozzle) | Generic PLA @BBL X2D |
 | sunlu pla+ 2.0 06.json | Bambu PLA Matte @BBL X2D 0.6 nozzle | Bambu PLA Matte @BBL X2D (Bambu Lab X2D 0.6 nozzle)<br>Bambu PLA Matte @BBL X2D 0.2 nozzle (Bambu Lab X2D 0.2 nozzle)<br>Bambu PLA Matte @BBL X2D 0.4 nozzle (Bambu Lab X2D 0.4 nozzle)<br>Bambu PLA Matte @BBL X2D 0.8 nozzle (Bambu Lab X2D 0.8 nozzle) | Bambu PLA Matte @BBL X2D |
-| Synthetic Stripped Suffix.json | Bambu PLA Basic @BBL X2D | Bambu PLA Basic @BBL X2D 0.2 nozzle (Bambu Lab X2D 0.2 nozzle)<br>Bambu PLA Basic @BBL X2D 0.4 nozzle (Bambu Lab X2D 0.4 nozzle)<br>Bambu PLA Basic @BBL X2D 0.6 nozzle (Bambu Lab X2D 0.6 nozzle)<br>Bambu PLA Basic @BBL X2D 0.8 nozzle (Bambu Lab X2D 0.8 nozzle) | Bambu PLA Basic @BBL X2D 0.4 nozzle |
+| Synthetic Stripped Suffix.json | Bambu PLA Basic @BBL X2D | Bambu PLA Basic @BBL X2D 0.2 nozzle (Bambu Lab X2D 0.2 nozzle)<br>Bambu PLA Basic @BBL X2D 0.4 nozzle (Bambu Lab X2D 0.4 nozzle)<br>Bambu PLA Basic @BBL X2D 0.6 nozzle (Bambu Lab X2D 0.6 nozzle)<br>Bambu PLA Basic @BBL X2D 0.8 nozzle (Bambu Lab X2D 0.8 nozzle) | (none: no nozzle size in the name, user picks) |
 | Synthetic Added Suffix.json | Bambu ABS @BBL X1C 0.4 nozzle | Bambu ABS @BBL X1C (Bambu Lab X1 Carbon 0.4 nozzle, Bambu Lab X1 0.4 nozzle, Bambu Lab X1 0.6 nozzle)<br>Bambu ABS @BBL X1C 0.2 nozzle (Bambu Lab X1 Carbon 0.2 nozzle, Bambu Lab X1 0.2 nozzle, Bambu Lab P1S 0.2 nozzle)<br>Bambu ABS @BBL X1C 0.6 nozzle (Bambu Lab X1 Carbon 0.6 nozzle)<br>Bambu ABS @BBL X1C 0.8 nozzle (Bambu Lab X1 Carbon 0.8 nozzle, Bambu Lab X1 0.8 nozzle, Bambu Lab P1S 0.8 nozzle) | Bambu ABS @BBL X1C |
 | Synthetic Other Printer Only.json | Overture PLA @BBL X2D 0.4 nozzle | (none) | (none) |
 | Synthetic No Candidates.json | Unobtainium Filament @BBL X2D 0.4 nozzle | (none) | (none) |
+
+Why `Synthetic Stripped Suffix` has no pre-selected fix: before the R1 nozzle hardening this
+fixture expected `Bambu PLA Basic @BBL X2D 0.4 nozzle`, because a name without a size was taken
+to mean 0.4. In this profile every unsuffixed X2D preset is the 0.6/0.8 variant (e.g.
+`Generic PETG @BBL X2D`), so that guess could put a 0.6 or 0.8 nozzle on 0.4 settings: a
+wrong-nozzle pick. Over the whole live profile, `node scripts/r1-simulate.ts` counted 150 such
+pre-selections when an unsuffixed parent disappears (and 143 more for renamed ones). R1 now lists
+each same-printer size as medium and asks the user to pick. The sidecar's `base_id`
+(`GFSG99_15`, a Generic PETG preset) is for another filament, so it is ignored.
 
 Also expected: R4 "missing sidecar" (severity info) for the 18 `06` presets.
 

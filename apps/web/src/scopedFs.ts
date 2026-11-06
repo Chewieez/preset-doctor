@@ -4,7 +4,7 @@ import { joinPath, normalizePath, type PresetFs } from '@preset-doctor/core';
 export function scopedFs(base: PresetFs, prefix: string): PresetFs {
   // Normalized before joining, so '..' is refused instead of climbing out of the prefix.
   const at = (path: string): string => joinPath(prefix, normalizePath(path));
-  const fs: PresetFs = {
+  return {
     readText: async (p) => base.readText(at(p)),
     readBytes: async (p) => base.readBytes(at(p)),
     writeText: async (p, d) => base.writeText(at(p), d),
@@ -13,12 +13,4 @@ export function scopedFs(base: PresetFs, prefix: string): PresetFs {
     exists: async (p) => base.exists(at(p)),
     mkdir: async (p) => base.mkdir(at(p)),
   };
-  const remove = base.remove?.bind(base);
-  if (remove) {
-    fs.remove = async (p) => {
-      if (normalizePath(p) === '') throw new Error('Refusing to remove the root');
-      return remove(at(p));
-    };
-  }
-  return fs;
 }

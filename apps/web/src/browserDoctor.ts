@@ -12,26 +12,19 @@
  */
 import {
   applyChanges,
-  ApplyError,
   assertBackupCovers,
-  BackupCoverageError,
-  BackupSourceError,
   createBackup,
   defaultChoices,
-  FixError,
+  findStale,
   isBackupId,
   isNotFound,
   listBackups,
   planFixes,
   restoreBackup,
-  RestoreError,
   scan,
   ScanError,
-  StaleChangeError,
   STUDIO_CONF_PATH,
-  unifiedDiff,
   type BackupInfo,
-  type Change,
   type FixChoice,
   type PresetFs,
   type ScanResult,
@@ -40,7 +33,6 @@ import type {
   AppConfig,
   ApplyPayload,
   IpcError,
-  IpcErrorCode,
   IpcResult,
   PlanOptions,
   PlanPayload,
@@ -50,6 +42,19 @@ import type {
   ScanPayload,
   StudioState,
 } from '@preset-doctor/ui/contract';
+import { STUDIO_FOLDER } from '@preset-doctor/ui/links';
+import {
+  applyFailure,
+  invalid,
+  parseChoices,
+  parsePlanOptions,
+  PlanStore,
+  Refusal,
+  restoreFailure,
+  run as runShared,
+  staleRefusal,
+  WriteQueue,
+} from '@preset-doctor/ui/service';
 import { ensureWritePermission, type ShowDirectoryPicker } from './fsaTypes';
 import { fsaFs } from './fsaFs';
 import type { HandleStore } from './handleStore';
@@ -57,8 +62,6 @@ import { scopedFs } from './scopedFs';
 
 /** Subfolder of the picked folder that holds the backup zips. */
 export const BACKUPS_DIR = 'preset-doctor-backups';
-const STUDIO_FOLDER = '%APPDATA%\\BambuStudio';
-const MAX_PLANS = 50;
 
 export interface BrowserDeps {
   /** window.showDirectoryPicker, or undefined when the browser has none. */
@@ -74,23 +77,14 @@ export interface BrowserDeps {
 
 type Dir = FileSystemDirectoryHandle;
 
-class Refusal extends Error {
-  constructor(
-    readonly code: IpcErrorCode,
-    message: string,
-    readonly extra: Partial<IpcError> = {},
-  ) {
-    super(message);
-  }
-}
-
 export class BrowserDoctor implements PresetDoctorApi {
   private folder: Dir | null = null;
   private loaded: Promise<void> | null = null;
   private lastScan: { folder: Dir; result: ScanResult } | null = null;
-  private readonly plans = new Map<string, { folder: Dir; changes: Change[] }>();
+  /** Previews, keyed to the folder they were planned for. */
+  private readonly plans = new PlanStore<Dir>();
   /** Writes (apply, restore) run one at a time. */
-  private writeQueue: Promise<unknown> = Promise.resolve();
+  private readonly writes = new WriteQueue(browserError);
 
   constructor(private readonly deps: BrowserDeps) {}
 
@@ -154,39 +148,38 @@ export class BrowserDoctor implements PresetDoctorApi {
     return run(async () => {
       const last = this.lastScan;
       if (!last) throw invalid('Scan first.');
-      const parsed = parseChoices(choices);
-      const updateBaseId = (options as Partial<PlanOptions> | null)?.updateBaseId !== false;
-      const changes = await planFixes(fsaFs(last.folder, { readOnly: true }), last.result, parsed, {
-        updateBaseId,
-      });
+      const changes = await planFixes(
+        fsaFs(last.folder, { readOnly: true }),
+        last.result,
+        parseChoices(choices),
+        parsePlanOptions(options),
+      );
       const planId = (this.deps.newId ?? (() => crypto.randomUUID()))();
-      this.plans.set(planId, { folder: last.folder, changes });
-      while (this.plans.size > MAX_PLANS) this.plans.delete(this.plans.keys().next().value!);
-      return {
-        planId,
-        changes: changes.map((c) => ({
-          path: c.path,
-          description: c.description,
-          diff: unifiedDiff(c),
-        })),
-      };
+      return this.plans.add(last.folder, changes, planId);
     });
   }
 
   apply(planId: string): Promise<IpcResult<ApplyPayload>> {
-    return this.serialized(async () => {
-      const plan = typeof planId === 'string' ? this.plans.get(planId) : undefined;
+    return this.writes.run(async () => {
+      const plan = this.plans.get(planId);
       if (!plan) throw invalid('This preview is out of date. Scan again, then try the repair.');
       if (plan.changes.length === 0) throw invalid('There is nothing to repair in this selection.');
-      await this.requireWriteAccess(plan.folder);
+      const folder = plan.key;
+      await this.requireWriteAccess(folder);
+      // Before the backup: a file deleted since the scan (say, a fresh `user` folder copied in)
+      // is "changed", not "missing from the backup".
+      if ((await findStale(fsaFs(folder, { readOnly: true }), plan.changes)).length > 0) {
+        this.plans.clear();
+        throw staleRefusal();
+      }
 
       // Every repair gets its own backup (unlike the desktop app, which makes one per session):
       // between repairs the user copies files back, opens Studio, and may copy a fresh `user`
       // folder into the copy, which an earlier backup wouldn't match.
       const now = this.deps.now?.();
-      const backup = await createBackup(fsaFs(plan.folder), backupsFs(plan.folder, false), {
+      const backup = await createBackup(fsaFs(folder), backupsFs(folder, false), {
         reason: 'before-fix',
-        sourceRoot: plan.folder.name,
+        sourceRoot: folder.name,
         ...(now ? { now } : {}),
       });
       // Whatever happens next, the files no longer match any other preview.
@@ -196,24 +189,10 @@ export class BrowserDoctor implements PresetDoctorApi {
           backup,
           plan.changes.map((c) => c.path),
         );
-        const { written } = await applyChanges(fsaFs(plan.folder), plan.changes);
+        const { written } = await applyChanges(fsaFs(folder), plan.changes);
         return { written, backup, backupIsNew: true };
       } catch (err) {
-        if (err instanceof BackupCoverageError) throw new Refusal('failed', err.message);
-        if (err instanceof StaleChangeError) {
-          throw new Refusal(
-            'stale',
-            'Some files changed since the scan, so nothing was written. Scan again and retry.',
-          );
-        }
-        if (err instanceof ApplyError) {
-          throw new Refusal(
-            'partial',
-            `${err.message}. Some files were already changed; restore backup ${backup.id} to undo.`,
-            { written: err.written, backupId: backup.id },
-          );
-        }
-        throw err;
+        throw applyFailure(err, backup.id) ?? err;
       }
     });
   }
@@ -227,7 +206,7 @@ export class BrowserDoctor implements PresetDoctorApi {
     backupId: string,
     options?: RestoreOptions,
   ): Promise<IpcResult<RestorePayload>> {
-    return this.serialized(async () => {
+    return this.writes.run(async () => {
       const folder = await this.checkRoot(root);
       if (typeof backupId !== 'string' || !isBackupId(backupId)) throw invalid('Bad backup name.');
       await this.requireWriteAccess(folder);
@@ -241,9 +220,7 @@ export class BrowserDoctor implements PresetDoctorApi {
           ...(now ? { now } : {}),
         });
       } catch (err) {
-        if (err instanceof BackupSourceError) throw new Refusal('other-source', err.message);
-        if (err instanceof RestoreError) throw restoreRefusal(err);
-        throw err;
+        throw restoreFailure(err) ?? err;
       }
       return { ...result, backupId };
     });
@@ -352,12 +329,6 @@ export class BrowserDoctor implements PresetDoctorApi {
       );
     }
   }
-
-  private serialized<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
-    const next = this.writeQueue.then(() => run(fn));
-    this.writeQueue = next;
-    return next;
-  }
 }
 
 function backupsFs(folder: Dir, readOnly: boolean): PresetFs {
@@ -419,23 +390,6 @@ async function checkCopy(fs: PresetFs, name: string): Promise<void> {
   throw new ScanError(message);
 }
 
-/** A restore that stopped part-way: say which backup undoes the part that was done. */
-function restoreRefusal(err: RestoreError): Refusal {
-  return new Refusal(
-    'partial',
-    err.message +
-      (err.safetyBackup ? '' : ' Restore the same backup again once the problem is fixed.'),
-    {
-      written: err.restored,
-      ...(err.safetyBackup ? { backupId: err.safetyBackup.id } : {}),
-    },
-  );
-}
-
-function invalid(message: string): Refusal {
-  return new Refusal('invalid', message);
-}
-
 function needsPermission(folder: { name: string }): Refusal {
   return invalid(
     `Preset Doctor needs permission to open "${folder.name}". Click Scan and choose Allow, ` +
@@ -443,42 +397,17 @@ function needsPermission(folder: { name: string }): Refusal {
   );
 }
 
-function parseChoices(value: unknown): FixChoice[] {
-  if (!Array.isArray(value)) throw invalid('Bad fix selection.');
-  return value.map((v: unknown) => {
-    const c = v as Partial<Record<keyof FixChoice, unknown>> | null;
-    if (!c || typeof c.presetPath !== 'string') throw invalid('Bad fix selection.');
-    const choice: FixChoice = { presetPath: c.presetPath };
-    if (typeof c.candidateName === 'string') choice.candidateName = c.candidateName;
-    if (c.rename === true) choice.rename = true;
-    return choice;
-  });
+/** A permission the browser refused (a picker or permission prompt that was dismissed). */
+function browserError(err: unknown): IpcError | undefined {
+  if ((err as { name?: unknown } | null)?.name !== 'NotAllowedError') return undefined;
+  return {
+    code: 'invalid',
+    message:
+      "The browser didn't allow Preset Doctor to open the folder. Click Scan and choose " +
+      'Allow, then try again.',
+  };
 }
 
-async function run<T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> {
-  try {
-    return { ok: true, value: await fn() };
-  } catch (err) {
-    if (err instanceof Refusal) {
-      return { ok: false, error: { code: err.code, message: err.message, ...err.extra } };
-    }
-    if (err instanceof FixError) {
-      return {
-        ok: false,
-        error: { code: err.stale ? 'stale' : 'invalid', message: err.message },
-      };
-    }
-    if ((err as { name?: unknown } | null)?.name === 'NotAllowedError') {
-      return {
-        ok: false,
-        error: {
-          code: 'invalid',
-          message:
-            "The browser didn't allow Preset Doctor to open the folder. Click Scan and choose " +
-            'Allow, then try again.',
-        },
-      };
-    }
-    return { ok: false, error: { code: 'failed', message: (err as Error).message } };
-  }
+function run<T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> {
+  return runShared(fn, browserError);
 }

@@ -136,7 +136,7 @@ describe('createBackup', () => {
       ...dest,
       async writeBytes(p, data) {
         const entries = unzipSync(data);
-        entries['user/1000000001/filament/A.json'] = encodeText('changed');
+        entries['user/1000000001/filament/A.json'] = new Uint8Array(encodeText('changed'));
         await dest.writeBytes(p, zipSync(entries));
       },
     };
@@ -207,6 +207,43 @@ describe('listBackups', () => {
     await createBackup(memFs(studio()), dest, { now: T1, sourceRoot: 'C:\\Data\\BambuStudio' });
     const [b] = await listBackups(dest);
     expect(b).toMatchObject({ sourceRoot: 'C:\\Data\\BambuStudio', accounts: ['1000000001'] });
+  });
+
+  it('leaves out manifest fields of the wrong type instead of trusting them', async () => {
+    const manifest = {
+      app: 'preset-doctor',
+      formatVersion: 1,
+      createdAt: T1.toISOString(),
+      reason: 'because',
+      fileCount: 1,
+      sourceRoot: 42,
+      accounts: [1, null],
+    };
+    const dest = memFs({
+      '2026-11-05T17-30-00.zip': zipSync({
+        'user/1/a.json': encodeText('{}'),
+        [MANIFEST_NAME]: encodeText(JSON.stringify(manifest)),
+      }),
+    });
+    const [b] = await listBackups(dest);
+    expect(b).toEqual({
+      id: '2026-11-05T17-30-00',
+      path: '2026-11-05T17-30-00.zip',
+      fileCount: 1,
+      bytes: expect.any(Number),
+      createdAt: T1.toISOString(),
+    });
+  });
+
+  it('counts the files of a zip whose manifest is not an object', async () => {
+    const dest = memFs({
+      '2026-11-05T17-30-00.zip': zipSync({
+        'user/1/a.json': encodeText('{}'),
+        'user/1/b.json': encodeText('{}'),
+        [MANIFEST_NAME]: encodeText('null'),
+      }),
+    });
+    expect(await listBackups(dest)).toMatchObject([{ fileCount: 2 }]);
   });
 });
 
@@ -356,6 +393,47 @@ describe('restoreBackup', () => {
     expect(await src.readText('user/1000000001/filament/A.json')).toBe('{"name":"changed A"}');
   });
 
+  it('says nothing was changed when the first write fails cleanly', async () => {
+    const src = memFs(studio());
+    const dest = memFs();
+    const b = await createBackup(src, dest, { now: T1 });
+    await src.writeText('user/1000000001/filament/A.json', '{"name":"changed A"}');
+    const failing: PresetFs = {
+      ...src,
+      writeBytes: async () => {
+        throw new Error('EPERM: operation not permitted');
+      },
+    };
+    const err = await restoreBackup(failing, dest, b.id, { now: T2 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(RestoreError);
+    expect((err as Error).message).toBe(
+      'Could not restore user/1000000001/filament/A.json (EPERM: operation not permitted). ' +
+        'No file was changed.',
+    );
+    expect(await src.readText('user/1000000001/filament/A.json')).toBe('{"name":"changed A"}');
+  });
+
+  it('counts a file that was replaced before its write failed as put back', async () => {
+    const src = memFs(studio());
+    const dest = memFs();
+    const b = await createBackup(src, dest, { now: T1 });
+    const target = 'user/1000000001/filament/A.json';
+    await src.writeText(target, '{"name":"changed A"}');
+    // Written, then the read-back check fails (as nodeFs does when it can't verify).
+    const failing: PresetFs = {
+      ...src,
+      writeBytes: async (path, data) => {
+        await src.writeBytes(path, data);
+        throw new Error('read-back did not match');
+      },
+    };
+    const err = await restoreBackup(failing, dest, b.id, { now: T2 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RestoreError);
+    expect((err as RestoreError).restored).toEqual([target]);
+    expect((err as RestoreError).message).toContain('1 file(s) were already put back');
+  });
+
   it('rejects unknown or unsafe ids without writing', async () => {
     const src = memFs(studio());
     const before = src.snapshot();
@@ -441,7 +519,7 @@ describe('with nodeFs on a temp copy of a fixture', () => {
     const presets = (await src.list('user/1000000001/filament')).filter((e) => e.kind === 'file');
     const target = joinPath('user/1000000001/filament', presets[0]?.name ?? '');
     await src.writeText(target, 'broken');
-    await src.remove(joinPath('user/1000000001/filament', presets[1]?.name ?? ''));
+    rmSync(src.resolve(joinPath('user/1000000001/filament', presets[1]?.name ?? '')));
 
     const result = await restoreBackup(src, dest, backup.id, { now: T2 });
     expect(osTree(studioDir)).toEqual(original);

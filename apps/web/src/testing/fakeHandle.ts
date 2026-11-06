@@ -75,6 +75,8 @@ export class FakeDir {
   /** Test hook: what queryPermission/requestPermission answer. */
   permission: PermissionState = 'granted';
   requests = 0;
+  /** Test hook: child names that values() leaves out (as a listing that can't see them). */
+  readonly hidden = new Set<string>();
 
   constructor(readonly name: string) {}
 
@@ -111,7 +113,7 @@ export class FakeDir {
 
   async *values(): AsyncGenerator<Node> {
     // Real handles list in no particular order; make sure callers sort.
-    yield* [...this.children.values()].reverse();
+    yield* [...this.children.values()].filter((c) => !this.hidden.has(c.name)).reverse();
   }
 
   async isSameEntry(other: unknown): Promise<boolean> {

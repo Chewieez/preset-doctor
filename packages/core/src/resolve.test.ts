@@ -1,14 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { PresetFs } from './fs.js';
-import { memFs } from './memFs.js';
 import { nodeFs } from './node/nodeFs.js';
 import {
   buildUserIndex,
   chain,
-  chainOf,
-  effectiveCompatiblePrinters,
   resolveParent,
-  settingIdOf,
   type ResolveContext,
   type SystemPresetLike,
 } from './resolve.js';
@@ -24,12 +20,7 @@ async function loadSystem(fs: PresetFs): Promise<Map<string, SystemPresetLike>> 
   const map = new Map<string, SystemPresetLike>();
   for (const { name, sub_path } of index.filament_list) {
     const body = JSON.parse(await fs.readText(`system/BBL/${sub_path}`)) as Record<string, unknown>;
-    map.set(name, {
-      name,
-      inherits: body['inherits'] as string | undefined,
-      settingId: body['setting_id'] as string | undefined,
-      compatiblePrinters: body['compatible_printers'] as string[] | undefined,
-    });
+    map.set(name, { name, inherits: body['inherits'] as string | undefined });
   }
   return map;
 }
@@ -113,23 +104,11 @@ describe('resolve on fixtures', () => {
     }
   });
 
-  it('resolves X2D compatibility through the chain (unsuffixed = 0.6/0.8)', async () => {
-    const { ctx } = await fixtureContext('broken-r1');
-    const unsuffixed = resolveParent('Generic PETG @BBL X2D', ctx)!;
-    expect(unsuffixed.kind).toBe('system');
-    expect(settingIdOf(unsuffixed)).toBe('GFSG99_16');
-    expect(effectiveCompatiblePrinters(unsuffixed, ctx)).toEqual([
-      'Bambu Lab X2D 0.6 nozzle',
-      'Bambu Lab X2D 0.8 nozzle',
-    ]);
-    const p04 = resolveParent('Generic PETG @BBL X2D 0.4 nozzle', ctx)!;
-    expect(settingIdOf(p04)).toBe('GFSG99_15');
-    expect(effectiveCompatiblePrinters(p04, ctx)).toEqual(['Bambu Lab X2D 0.4 nozzle']);
-  });
-
   it('a system chain reaches the templates and stops at the root', async () => {
     const { ctx } = await fixtureContext('broken-r1');
-    const c = chainOf(resolveParent('Generic PETG @BBL X2D', ctx)!, ctx);
+    expect(resolveParent('Generic PETG @BBL X2D', ctx)?.kind).toBe('system');
+    const leaf = userPreset('Leaf', { name: 'Leaf', inherits: 'Generic PETG @BBL X2D' });
+    const c = chain(leaf, ctx);
     expect(c.end).toEqual({ kind: 'root' });
     expect(c.links.map((l) => l.name)).toContain('Generic PETG @base');
     expect(c.links.every((l) => l.kind === 'system')).toBe(true);
@@ -137,7 +116,7 @@ describe('resolve on fixtures', () => {
 });
 
 describe('resolveParent', () => {
-  const sys: SystemPresetLike = { name: 'Sys', settingId: 'GF1' };
+  const sys: SystemPresetLike = { name: 'Sys' };
   const user = userPreset('Mine', { name: 'Mine', inherits: 'Sys' });
 
   it('returns null for an empty name or a missing preset', () => {
@@ -194,14 +173,15 @@ describe('chain', () => {
   });
 
   it('guards against cycles among system presets', () => {
+    const leaf = userPreset('L', { name: 'L', inherits: 'X' });
     const ctx = ctxOf(
       [
         { name: 'X', inherits: 'Y' },
         { name: 'Y', inherits: 'X' },
       ],
-      [],
+      [leaf],
     );
-    expect(chainOf(resolveParent('X', ctx)!, ctx).end).toEqual({ kind: 'cycle', name: 'X' });
+    expect(chain(leaf, ctx).end).toEqual({ kind: 'cycle', name: 'X' });
   });
 
   it('stops very deep chains', () => {
@@ -217,8 +197,9 @@ describe('chain', () => {
 
   it('does not let a system preset inherit from a user preset', () => {
     const user = userPreset('U', { name: 'U' });
-    const ctx = ctxOf([{ name: 'S', inherits: 'U' }], [user]);
-    expect(chainOf(resolveParent('S', ctx)!, ctx).end).toEqual({
+    const leaf = userPreset('L', { name: 'L', inherits: 'S' });
+    const ctx = ctxOf([{ name: 'S', inherits: 'U' }], [user, leaf]);
+    expect(chain(leaf, ctx).end).toEqual({
       kind: 'missing',
       name: 'U',
       referencedBy: 'S',
@@ -229,50 +210,5 @@ describe('chain', () => {
     const broken: UserPreset = { ...userPreset('Bad', {}), raw: '{', parseError: 'x' };
     delete broken.json;
     expect(chain(broken, ctxOf([], [broken]))).toEqual({ links: [], end: { kind: 'root' } });
-  });
-});
-
-describe('effectiveCompatiblePrinters and settingIdOf', () => {
-  it('takes the nearest value; an empty list counts as set', () => {
-    const ctx = ctxOf(
-      [
-        { name: 'Root', compatiblePrinters: [] },
-        { name: 'Mid', inherits: 'Root', compatiblePrinters: ['P 0.4 nozzle'] },
-        { name: 'Leaf', inherits: 'Mid' },
-        { name: 'Bare', inherits: 'Root' },
-        { name: 'Alone' },
-      ],
-      [],
-    );
-    expect(effectiveCompatiblePrinters(resolveParent('Leaf', ctx)!, ctx)).toEqual(['P 0.4 nozzle']);
-    expect(effectiveCompatiblePrinters(resolveParent('Bare', ctx)!, ctx)).toEqual([]);
-    expect(effectiveCompatiblePrinters(resolveParent('Alone', ctx)!, ctx)).toBeUndefined();
-  });
-
-  it('reads a user preset own list, else its parents', () => {
-    const own = userPreset('Own', { name: 'Own', compatible_printers: ['Q 0.6 nozzle'] });
-    const inherited = userPreset('Inh', { name: 'Inh', inherits: 'Own' });
-    const bad = userPreset('Bad', { name: 'Bad', inherits: 'Own', compatible_printers: [1] });
-    const ctx = ctxOf([], [own, inherited, bad]);
-    for (const n of ['Own', 'Inh', 'Bad']) {
-      expect(effectiveCompatiblePrinters(resolveParent(n, ctx)!, ctx), n).toEqual(['Q 0.6 nozzle']);
-    }
-  });
-
-  it('settingIdOf reads user presets from JSON, else the sidecar', async () => {
-    const fs = memFs({
-      'user/1/filament/A.json': '{"name":"A"}',
-      'user/1/filament/A.info': 'sync_info = \nsetting_id = PFUS00000000000001\n',
-      'user/1/filament/B.json': '{"name":"B","setting_id":"PFUS00000000000002"}',
-      'user/1/filament/C.json': '{"name":"C"}',
-      'user/1/filament/C.info': 'setting_id = \n',
-    });
-    const ctx: ResolveContext = {
-      system: new Map(),
-      userByName: buildUserIndex(await scanUser(fs, '1')),
-    };
-    expect(settingIdOf(resolveParent('A', ctx)!)).toBe('PFUS00000000000001');
-    expect(settingIdOf(resolveParent('B', ctx)!)).toBe('PFUS00000000000002');
-    expect(settingIdOf(resolveParent('C', ctx)!)).toBeUndefined();
   });
 });

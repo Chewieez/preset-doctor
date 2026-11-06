@@ -19,12 +19,13 @@ import {
   applyChanges,
   ApplyError,
   defaultChoices,
+  findStale,
   FixError,
   planFixes,
   StaleChangeError,
-  unifiedDiff,
 } from './fix.js';
-import { fileStem } from './fs.js';
+import { unifiedDiff } from './diff.js';
+import { errorMessage } from './fs.js';
 import { VERSION } from './index.js';
 import { defaultPaths, isStudioRunning, type DefaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
@@ -103,6 +104,23 @@ interface Args {
 
 class UsageError extends Error {}
 
+/** The Args keys that a bare flag switches on. */
+type BoolFlag = { [K in keyof Args]: Args[K] extends boolean ? K : never }[keyof Args];
+
+/** A Map, not an object: `'constructor' in {}` is true, which would swallow a folder so named. */
+const FLAGS: ReadonlyMap<string, BoolFlag> = new Map<string, BoolFlag>([
+  ['--json', 'json'],
+  ['--dry-run', 'dryRun'],
+  ['--apply', 'apply'],
+  ['--yes', 'yes'],
+  ['-y', 'yes'],
+  ['--no-base-id', 'noBaseId'],
+  ['--from-other-folder', 'fromOtherFolder'],
+  ['--help', 'help'],
+  ['-h', 'help'],
+  ['--version', 'version'],
+]);
+
 function parseArgs(argv: readonly string[]): Args {
   const args: Args = {
     positional: [],
@@ -115,28 +133,17 @@ function parseArgs(argv: readonly string[]): Args {
     help: false,
     version: false,
   };
-  const flags: Record<string, keyof Args> = {
-    '--json': 'json',
-    '--dry-run': 'dryRun',
-    '--apply': 'apply',
-    '--yes': 'yes',
-    '-y': 'yes',
-    '--no-base-id': 'noBaseId',
-    '--from-other-folder': 'fromOtherFolder',
-    '--help': 'help',
-    '-h': 'help',
-    '--version': 'version',
-  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a];
+    const key = flag === undefined ? undefined : FLAGS.get(flag);
     if (flag === '--user' || flag === '--backups') {
       const value = inline ?? argv[++i];
       if (value === undefined || value === '') throw new UsageError(`${flag} needs a value.`);
       if (flag === '--user') args.user = value;
       else args.backups = value;
-    } else if (flag !== undefined && flag in flags) {
-      (args as unknown as Record<string, boolean>)[flags[flag]!] = true;
+    } else if (key !== undefined) {
+      args[key] = true;
     } else if (a.startsWith('-') && a !== '-') {
       throw new UsageError(`Unknown option ${a}.`);
     } else {
@@ -162,7 +169,7 @@ export async function main(argv: readonly string[], deps: Partial<CliDeps> = {})
   try {
     args = parseArgs(argv);
   } catch (e) {
-    err(`${(e as Error).message} Run "preset-doctor --help" for usage.`);
+    err(`${errorMessage(e)} Run "preset-doctor --help" for usage.`);
     return EXIT.usage;
   }
   if (args.version) {
@@ -196,11 +203,7 @@ export async function main(argv: readonly string[], deps: Partial<CliDeps> = {})
       err(e.message);
       return EXIT.refused;
     }
-    err(
-      e instanceof ScanError || e instanceof FixError
-        ? e.message
-        : `Error: ${(e as Error).message}`,
-    );
+    err(e instanceof ScanError || e instanceof FixError ? e.message : `Error: ${errorMessage(e)}`);
     return EXIT.failed;
   }
 }
@@ -303,7 +306,7 @@ function printHeader(r: ScanResult, out: (l?: string) => void): void {
 }
 
 function label(p: PresetSummary): string {
-  return (p.name ?? fileStem(p.path)) + (p.isBase ? ' [base]' : '');
+  return (p.name ?? p.fileStem) + (p.isBase ? ' [base]' : '');
 }
 
 function fixNote(f: Finding): string | undefined {
@@ -369,6 +372,9 @@ async function fixCommand(
   if (!(await studioClosed(d, err))) return EXIT.refused;
 
   const writeFs = nodeFs(root);
+  // Before the backup: a planned file that is gone since the scan is stale, not "not backed up".
+  const stale = await findStale(writeFs, changes);
+  if (stale.length > 0) throw new StaleChangeError(stale);
   const backupsDir = args.backups ?? d.paths.backupsDir;
   const backup = await createBackup(writeFs, nodeFs(backupsDir), {
     now: d.now(),
@@ -393,18 +399,14 @@ async function fixCommand(
     out(`Done: changed ${applied.written.length} file(s).`);
   } catch (e) {
     if (e instanceof ApplyError) {
-      err(`${e.message}`);
+      err(e.message);
       err(`Already changed: ${e.written.join(', ') || 'nothing'}.`);
-      err(
-        `To undo: preset-doctor backups restore ${backup.id} ${quote(root)}${backupsFlag(args)} --yes`,
-      );
+      err(`To undo: ${restoreHint(backup.id, root, args)}`);
       return EXIT.failed;
     }
     throw e;
   }
-  out(
-    `To undo: preset-doctor backups restore ${backup.id} ${quote(root)}${backupsFlag(args)} --yes`,
-  );
+  out(`To undo: ${restoreHint(backup.id, root, args)}`);
   out('Next: open Bambu Studio and check that the presets are back.');
   if (result.findings.some((f) => f.ruleId === R5_ID)) {
     out('Cloud preset sync is on: if a repair comes undone, turn sync off and repair again.');
@@ -418,7 +420,7 @@ async function studioClosed(d: CliDeps, err: (l: string) => void): Promise<boole
     running = await d.isStudioRunning();
   } catch (e) {
     err(
-      `Could not check whether Bambu Studio is running (${(e as Error).message}), so nothing was changed.`,
+      `Could not check whether Bambu Studio is running (${errorMessage(e)}), so nothing was changed.`,
     );
     return false;
   }
@@ -478,16 +480,14 @@ async function backupsCommand(
         err(e.message);
         if (e.safetyBackup) {
           err(
-            `To go back to how it was before this restore: preset-doctor backups restore ${e.safetyBackup.id} ${quote(root)}${backupsFlag(args)} --yes`,
+            `To go back to how it was before this restore: ${restoreHint(e.safetyBackup.id, root, args)}`,
           );
         }
         return EXIT.failed;
       }
       if (!(e instanceof BackupSourceError)) throw e;
       err(e.message);
-      err(
-        `To restore it into ${e.sourceRoot}: preset-doctor backups restore ${id} ${quote(e.sourceRoot)}${backupsFlag(args)} --yes`,
-      );
+      err(`To restore it into ${e.sourceRoot}: ${restoreHint(id, e.sourceRoot, args)}`);
       err('To put it into this folder anyway, add --from-other-folder.');
       return EXIT.refused;
     }
@@ -516,6 +516,11 @@ function fixHint(root: string, args: Args, result: ScanResult, mode: string): st
   );
 }
 
+/** The `backups restore` command that puts backup `id` back into `root`, keeping --backups. */
+function restoreHint(id: string, root: string, args: Args): string {
+  return `preset-doctor backups restore ${id} ${quote(root)}${backupsFlag(args)} --yes`;
+}
+
 function backupsFlag(args: Args): string {
   return args.backups !== undefined ? ` --backups ${quote(args.backups)}` : '';
 }
@@ -540,7 +545,7 @@ if (isMainModule()) {
       process.exitCode = code;
     },
     (e: unknown) => {
-      process.stderr.write(`Error: ${(e as Error).message}\n`);
+      process.stderr.write(`Error: ${errorMessage(e)}\n`);
       process.exitCode = EXIT.failed;
     },
   );

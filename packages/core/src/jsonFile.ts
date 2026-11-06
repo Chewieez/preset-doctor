@@ -6,6 +6,7 @@
  * files are not canonical at all. Fixes should therefore use the minimal-edit helpers
  * (setJsonStringField / setJsonArrayStringItem), which change only the bytes of one value.
  */
+import { errorMessage } from './fs.js';
 
 export interface JsonFormat {
   /** Indent unit, e.g. four spaces. */
@@ -38,7 +39,18 @@ export class JsonFileError extends Error {
   }
 }
 
-const BOM = '﻿';
+// Written as an escape so the source stays plain ASCII.
+const BOM = '\uFEFF';
+
+/** The text without a leading byte order mark, if it has one. */
+export function stripBom(text: string): string {
+  return text.startsWith(BOM) ? text.slice(1) : text;
+}
+
+/** A JSON object: not null, not an array. */
+export function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
 
 export function detectJsonFormat(text: string): Omit<JsonFormat, 'canonical'> {
   const bom = text.startsWith(BOM);
@@ -56,7 +68,7 @@ export function parseJsonFile(text: string): ParsedJsonFile {
   try {
     value = JSON.parse(base.bom ? text.slice(1) : text);
   } catch (err) {
-    throw new JsonFileError((err as Error).message);
+    throw new JsonFileError(errorMessage(err));
   }
   const format: JsonFormat = { ...base, canonical: false };
   format.canonical = serializeJsonFile(value, format) === text;
@@ -69,7 +81,7 @@ export function tryParseJsonFile(text: string): TryParseResult {
   try {
     return { ok: true, ...parseJsonFile(text) };
   } catch (err) {
-    return { ok: false, error: (err as Error).message };
+    return { ok: false, error: errorMessage(err) };
   }
 }
 

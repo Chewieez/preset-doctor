@@ -12,7 +12,15 @@
  *   3. Cloud sync: updated_time is never touched; scan warns (R5) when sync is on.
  *   4. Caches: none are cleared; the CLI asks the user to reopen Studio and check.
  */
-import { bytesEqual, decodeText, encodeText, isNotFound, type PresetFs } from './fs.js';
+import {
+  bytesEqual,
+  encodeText,
+  errorMessage,
+  InvalidUtf8Error,
+  isNotFound,
+  readTextStrict,
+  type PresetFs,
+} from './fs.js';
 import {
   getInfoValue,
   INFO_KEYS,
@@ -20,8 +28,14 @@ import {
   serializeInfoFile,
   setInfoValue,
 } from './infoFile.js';
-import { setJsonArrayStringItem, setJsonStringField, tryParseJsonFile } from './jsonFile.js';
+import {
+  isRecord,
+  setJsonArrayStringItem,
+  setJsonStringField,
+  tryParseJsonFile,
+} from './jsonFile.js';
 import type { Candidate, Change, Finding, PresetSummary, ScanResult } from './types.js';
+import { infoPathFor } from './userScan.js';
 
 export interface FixChoice {
   /** presetPath of the finding(s) to fix. */
@@ -141,7 +155,7 @@ async function baseIdChange(
   parent: Candidate,
 ): Promise<Change | null> {
   if (parent.settingId === undefined || parent.source === 'user') return null;
-  const infoPath = `${presetPath.slice(0, -'.json'.length)}.info`;
+  const infoPath = infoPathFor(presetPath);
   let before: string;
   try {
     before = await readExact(fs, infoPath);
@@ -165,15 +179,15 @@ async function baseIdChange(
  * don't survive decode + encode (invalid UTF-8) would have more than one value changed; refuse.
  */
 async function readExact(fs: PresetFs, path: string): Promise<string> {
-  const bytes = await fs.readBytes(path);
-  const text = decodeText(bytes);
-  if (!bytesEqual(encodeText(text), bytes)) {
+  try {
+    return await readTextStrict(fs, path);
+  } catch (err) {
+    if (!(err instanceof InvalidUtf8Error)) throw err;
     throw new FixError(
       `${path} is not valid UTF-8 text, so Preset Doctor won't edit it (that would change more ` +
         'than the one setting). Restore it from a backup, or recreate the preset in Bambu Studio.',
     );
   }
-  return text;
 }
 
 /**
@@ -268,14 +282,11 @@ export interface ApplyResult {
 }
 
 /**
- * Writes the changes. First re-reads every file and refuses all of them (StaleChangeError) if
- * any no longer matches `before`; then writes each one and reads it back.
+ * The planned files that no longer hold their `before` text (or are gone). Callers check this
+ * before making a backup, so a file deleted since the scan is reported as changed, not as
+ * missing from the backup; applyChanges checks it again right before writing.
  */
-export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Promise<ApplyResult> {
-  const paths = changes.map((c) => c.path);
-  const dup = paths.find((p, i) => paths.indexOf(p) !== i);
-  if (dup !== undefined) throw new FixError(`More than one change for ${dup}.`);
-
+export async function findStale(fs: PresetFs, changes: readonly Change[]): Promise<string[]> {
   // Bytes, not decoded text: invalid UTF-8 decodes lossily, so text equality could hide a change.
   const stale: string[] = [];
   for (const c of changes) {
@@ -287,6 +298,19 @@ export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Pr
     }
     if (!current || !bytesEqual(current, encodeText(c.before))) stale.push(c.path);
   }
+  return stale;
+}
+
+/**
+ * Writes the changes. First re-reads every file and refuses all of them (StaleChangeError) if
+ * any no longer matches `before`; then writes each one and reads it back.
+ */
+export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Promise<ApplyResult> {
+  const paths = changes.map((c) => c.path);
+  const dup = paths.find((p, i) => paths.indexOf(p) !== i);
+  if (dup !== undefined) throw new FixError(`More than one change for ${dup}.`);
+
+  const stale = await findStale(fs, changes);
   if (stale.length > 0) throw new StaleChangeError(stale);
 
   const written: string[] = [];
@@ -307,7 +331,7 @@ export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Pr
         // Can't tell: report it as changed.
       }
       throw new ApplyError(
-        `Could not write ${c.path}: ${(err as Error).message}`,
+        `Could not write ${c.path}: ${errorMessage(err)}`,
         unchanged ? written : [...written, c.path],
       );
     }
@@ -316,127 +340,10 @@ export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Pr
   return { written };
 }
 
-export interface DiffOptions {
-  /** Unchanged lines shown around each change. Default 3. */
-  context?: number;
-}
-
-/** A unified diff of one change, for display. Line endings are not shown. */
-export function unifiedDiff(change: Change, options: DiffOptions = {}): string {
-  const context = options.context ?? 3;
-  const a = splitLines(change.before);
-  const b = splitLines(change.after);
-  const ops = diffLines(a, b);
-  const out = [`--- a/${change.path}`, `+++ b/${change.path}`];
-
-  // Positions (in a and b) before each op, for hunk headers.
-  const posA: number[] = [];
-  const posB: number[] = [];
-  let ia = 0;
-  let ib = 0;
-  for (const op of ops) {
-    posA.push(ia);
-    posB.push(ib);
-    if (op.kind !== '+') ia++;
-    if (op.kind !== '-') ib++;
-  }
-
-  let i = 0;
-  while (i < ops.length) {
-    if (ops[i]!.kind === ' ') {
-      i++;
-      continue;
-    }
-    const start = Math.max(0, i - context);
-    let end = i;
-    // Extend over changes that are close enough to share context.
-    for (let j = i; j < ops.length; j++) {
-      if (ops[j]!.kind !== ' ') end = j;
-      else if (j - end > 2 * context) break;
-    }
-    const stop = Math.min(ops.length - 1, end + context);
-    const slice = ops.slice(start, stop + 1);
-    const lenA = slice.filter((o) => o.kind !== '+').length;
-    const lenB = slice.filter((o) => o.kind !== '-').length;
-    const startA = lenA === 0 ? posA[start]! : posA[start]! + 1;
-    const startB = lenB === 0 ? posB[start]! : posB[start]! + 1;
-    out.push(`@@ -${startA},${lenA} +${startB},${lenB} @@`);
-    for (const o of slice) out.push(o.kind + o.line);
-    i = stop + 1;
-  }
-  return out.join('\n');
-}
-
-interface DiffOp {
-  kind: ' ' | '-' | '+';
-  line: string;
-}
-
-function splitLines(text: string): string[] {
-  if (text === '') return [];
-  const lines = text.split('\n').map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
-  if (lines[lines.length - 1] === '') lines.pop();
-  return lines;
-}
-
-/** Line diff: common prefix and suffix, then an LCS table over what is left. */
-function diffLines(a: string[], b: string[]): DiffOp[] {
-  let pre = 0;
-  while (pre < a.length && pre < b.length && a[pre] === b[pre]) pre++;
-  let suf = 0;
-  while (
-    suf < a.length - pre &&
-    suf < b.length - pre &&
-    a[a.length - 1 - suf] === b[b.length - 1 - suf]
-  ) {
-    suf++;
-  }
-  const midA = a.slice(pre, a.length - suf);
-  const midB = b.slice(pre, b.length - suf);
-  const ops: DiffOp[] = a.slice(0, pre).map((line) => ({ kind: ' ', line }));
-
-  if (midA.length * midB.length > 4_000_000) {
-    // Too big for a table; a single replace block is still a correct diff.
-    for (const line of midA) ops.push({ kind: '-', line });
-    for (const line of midB) ops.push({ kind: '+', line });
-  } else {
-    const n = midA.length;
-    const m = midB.length;
-    const lcs: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
-    for (let x = n - 1; x >= 0; x--) {
-      for (let y = m - 1; y >= 0; y--) {
-        lcs[x]![y] =
-          midA[x] === midB[y]
-            ? lcs[x + 1]![y + 1]! + 1
-            : Math.max(lcs[x + 1]![y]!, lcs[x]![y + 1]!);
-      }
-    }
-    let x = 0;
-    let y = 0;
-    while (x < n || y < m) {
-      if (x < n && y < m && midA[x] === midB[y]) {
-        ops.push({ kind: ' ', line: midA[x++]! });
-        y++;
-      } else if (x < n && (y === m || lcs[x + 1]![y]! >= lcs[x]![y + 1]!)) {
-        // Removals before additions, as diff tools show them.
-        ops.push({ kind: '-', line: midA[x++]! });
-      } else {
-        ops.push({ kind: '+', line: midB[y++]! });
-      }
-    }
-  }
-  for (const line of a.slice(a.length - suf)) ops.push({ kind: ' ', line });
-  return ops;
-}
-
 function joinNotes(notes: string[]): string {
   return notes.length <= 1 ? (notes[0] ?? 'no change') : notes.join(' and ');
 }
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

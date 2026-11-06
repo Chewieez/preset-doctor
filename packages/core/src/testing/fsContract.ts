@@ -68,15 +68,6 @@ export function describePresetFsContract(
       expect(await fs.list('a/b/c')).toEqual([]);
     });
 
-    it('removes files and whole folders', async () => {
-      const fs = await make({ 'k/a.txt': '', 'k/s/b.txt': '', 'keep.txt': '' });
-      await fs.remove?.('k/a.txt');
-      expect(await fs.exists('k/a.txt')).toBe(false);
-      await fs.remove?.('k');
-      expect(await fs.exists('k')).toBe(false);
-      expect(await fs.exists('keep.txt')).toBe(true);
-    });
-
     it('rejects paths that escape the root', async () => {
       const fs = await make({});
       await expect(fs.readText('../outside.txt')).rejects.toThrow(/\.\./);

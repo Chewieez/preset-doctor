@@ -119,7 +119,8 @@ describe('isStudioRunning', () => {
     expect(typeof (await isStudioRunning())).toBe('boolean');
   });
 
-  it.runIf(process.env.PRESET_DOCTOR_LIVE === '1')(
+  // Needs Bambu Studio open: npm run test:live -- studioProcess
+  it.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')(
     'sees the running Bambu Studio (live)',
     async () => {
       expect(await isStudioRunning()).toBe(true);

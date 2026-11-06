@@ -1,6 +1,13 @@
-import { InvalidUtf8Error, isNotFound, joinPath, readTextStrict, type PresetFs } from './fs.js';
+import {
+  errorMessage,
+  InvalidUtf8Error,
+  isNotFound,
+  joinPath,
+  readTextStrict,
+  type PresetFs,
+} from './fs.js';
 import { parseInfoFile } from './infoFile.js';
-import { tryParseJsonFile } from './jsonFile.js';
+import { isRecord, tryParseJsonFile } from './jsonFile.js';
 import type { AccountSummary, UserPreset } from './types.js';
 
 /** Root-relative folder holding one folder per account (plus 'default' when logged out). */
@@ -16,6 +23,11 @@ interface PresetFile {
   path: string;
   fileStem: string;
   isBase: boolean;
+}
+
+/** Where the .info sync file of the preset at `jsonPath` (ending in .json, any case) is. */
+export function infoPathFor(jsonPath: string): string {
+  return `${jsonPath.slice(0, -'.json'.length)}.info`;
 }
 
 /**
@@ -45,7 +57,8 @@ function compareAccounts(a: AccountSummary, b: AccountSummary): number {
 /**
  * Reads every filament preset of one account (filament/*.json, then filament/base/*.json),
  * each paired with its .info sidecar when present. Never throws for a bad file: unreadable
- * or invalid JSON is reported through `parseError` so the rules can explain it.
+ * or invalid JSON is reported through `parseError`, and an unreadable sidecar through
+ * `infoError`, so the rules can explain it.
  */
 export async function scanUser(fs: PresetFs, accountId: string): Promise<UserPreset[]> {
   const files = await presetFiles(fs, accountId);
@@ -66,7 +79,7 @@ async function presetFiles(fs: PresetFs, accountId: string): Promise<PresetFile[
 }
 
 async function readPreset(fs: PresetFs, accountId: string, f: PresetFile): Promise<UserPreset> {
-  const infoPath = `${f.path.slice(0, -5)}.info`;
+  const infoPath = infoPathFor(f.path);
   const preset: UserPreset = {
     accountId,
     path: f.path,
@@ -83,7 +96,7 @@ async function readPreset(fs: PresetFs, accountId: string, f: PresetFile): Promi
     preset.parseError =
       err instanceof InvalidUtf8Error
         ? err.message
-        : `Could not read the file: ${(err as Error).message}`;
+        : `Could not read the file: ${errorMessage(err)}`;
     return preset;
   }
 
@@ -92,14 +105,19 @@ async function readPreset(fs: PresetFs, accountId: string, f: PresetFile): Promi
     preset.parseError = parsed.error;
   } else {
     preset.format = parsed.format;
-    if (isPlainObject(parsed.value)) preset.json = parsed.value;
+    if (isRecord(parsed.value)) preset.json = parsed.value;
     else preset.parseError = 'The file is valid JSON but not a JSON object.';
   }
 
-  const infoRaw = await readOptional(fs, infoPath);
-  if (infoRaw !== undefined) {
-    preset.infoRaw = infoRaw;
-    preset.info = parseInfoFile(infoRaw);
+  try {
+    const infoRaw = await readOptional(fs, infoPath);
+    if (infoRaw !== undefined) {
+      preset.infoRaw = infoRaw;
+      preset.info = parseInfoFile(infoRaw);
+    }
+  } catch (err) {
+    // Locked by OneDrive or an antivirus, or a folder named *.info: say so, don't fail the scan.
+    preset.infoError = `Could not read the sync file: ${errorMessage(err)}`;
   }
   return preset;
 }
@@ -126,8 +144,4 @@ function assertAccountId(id: string): void {
   if (id === '' || id === '.' || id === '..' || /[\\/]/.test(id)) {
     throw new Error(`Invalid account id: ${JSON.stringify(id)}`);
   }
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

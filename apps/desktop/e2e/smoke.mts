@@ -3,7 +3,8 @@
  *
  * Works on a temp copy of the broken-r1 fixture, never on the real Bambu Studio folder: the app is
  * started with PRESET_DOCTOR_ROOT pointing at the copy and a faked "is Studio running" answer
- * (the real Studio may well be open on this machine). Also writes the README screenshots.
+ * (the real Studio may well be open on this machine). With --screenshots (as
+ * `npm run screenshots` passes it) it also rewrites the README screenshots in docs/screenshots.
  *
  * Set PRESET_DOCTOR_E2E_KEEP=1 to keep the temp folder for inspection, and
  * PRESET_DOCTOR_E2E_EXE to a packaged exe (release/win-unpacked/Preset Doctor.exe) to test that
@@ -22,6 +23,7 @@ const appDir = join(here, '..');
 const repo = join(appDir, '..', '..');
 const fixture = join(repo, 'packages', 'core', 'src', '__fixtures__', 'broken-r1');
 const shotsDir = join(repo, 'docs', 'screenshots');
+const writeShots = process.argv.includes('--screenshots');
 const packagedExe = process.env.PRESET_DOCTOR_E2E_EXE;
 const electronPath = packagedExe ?? (createRequire(import.meta.url)('electron') as string);
 
@@ -29,13 +31,14 @@ const electronPath = packagedExe ?? (createRequire(import.meta.url)('electron') 
 const SHOWN_ROOT = 'C:\\Users\\you\\AppData\\Roaming\\BambuStudio';
 const ORPHAN = 'Anycubic Petg 06';
 const LOW_ONLY = 'Synthetic Other Printer Only';
+const UNSURE_NOZZLE = 'Synthetic Stripped Suffix';
 const NO_CANDIDATES = 'Synthetic No Candidates';
 
 const work = await mkdtemp(join(tmpdir(), 'preset-doctor-e2e-'));
 const root = join(work, 'BambuStudio');
 const backups = join(work, 'backups');
 await cp(fixture, root, { recursive: true });
-await mkdir(shotsDir, { recursive: true });
+if (writeShots) await mkdir(shotsDir, { recursive: true });
 
 const launched: ElectronApplication[] = [];
 
@@ -86,6 +89,8 @@ async function screenshot(page: Page, file: string): Promise<void> {
   }, SHOWN_ROOT);
   const text = await page.evaluate(() => document.body.innerText);
   assert.ok(!text.includes(work), `the temp folder (with the user name) shows in ${file}`);
+  // The check above runs either way; only the file is optional.
+  if (!writeShots) return;
   await page.screenshot({ path: join(shotsDir, file) });
   console.log(`  screenshot docs/screenshots/${file}`);
 }
@@ -132,6 +137,15 @@ try {
   await detail.locator('.candidate input[type=radio]').first().check();
   assert.equal(await row(page, LOW_ONLY).locator('input[type=checkbox]').isChecked(), true);
   await detail.locator('[data-testid=diff]').first().waitFor();
+
+  // Nor is one whose parent's name has no nozzle size: pick the 0.4 nozzle preset by hand.
+  await row(page, UNSURE_NOZZLE).click();
+  assert.equal(await row(page, UNSURE_NOZZLE).locator('input[type=checkbox]').isChecked(), false);
+  await detail
+    .locator('.candidate', { hasText: 'Bambu PLA Basic @BBL X2D 0.4 nozzle' })
+    .locator('input[type=radio]')
+    .check();
+  assert.equal(await row(page, UNSURE_NOZZLE).locator('input[type=checkbox]').isChecked(), true);
 
   await page.click('[data-testid=fix-selected]');
   const dialog = page.locator('[data-testid=review-dialog]');

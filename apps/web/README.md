@@ -14,9 +14,9 @@ npm run web:e2e       # build, then the end-to-end smoke test in Edge or Chrome
 ## Why it works on a copy
 
 Chromium's File System Access API refuses every folder under `%APPDATA%`, so the user copies
-`system`, `user` and `BambuStudio.conf` into a normal folder, picks it here, and copies `user` back
-afterwards. The guide on the page walks through that, and after a fix it lists exactly which files
-changed (relative to the BambuStudio folder).
+`system`, `user` and `BambuStudio.conf` into a normal folder, picks it here, and copies the
+changed files back. The guide on the page walks through that, and after a fix it lists exactly
+which files changed (relative to the BambuStudio folder).
 
 ## Layout
 

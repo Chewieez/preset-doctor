@@ -5,7 +5,8 @@
  * bodies (setting_id, inherits, compatible_printers) are read lazily and cached, because R1 only
  * needs a handful of siblings per orphan; loadAll() is there for callers that want everything.
  */
-import { dirname, isNotFound, joinPath, type PresetFs } from './fs.js';
+import { dirname, errorMessage, isNotFound, joinPath, type PresetFs } from './fs.js';
+import { isRecord, stripBom } from './jsonFile.js';
 import {
   modelMatchesCode,
   parseCompatiblePrinter,
@@ -32,9 +33,7 @@ export interface SystemEntry {
 
 /** The parts of a system preset body the rules need. */
 export interface SystemPreset extends SystemEntry {
-  type?: string;
   settingId?: string;
-  filamentId?: string;
   /** Empty string means "no parent". */
   inherits: string;
   /** Only when the file itself sets it; see effectiveCompatiblePrinters for the inherited value. */
@@ -43,8 +42,8 @@ export interface SystemPreset extends SystemEntry {
 }
 
 export class SystemIndexError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'SystemIndexError';
   }
 }
@@ -72,8 +71,6 @@ export interface SystemIndex {
   /** Reads and caches one body; null (plus a warning) if absent, unreadable or not JSON. */
   load(name: string): Promise<SystemPreset | null>;
   loadAll(): Promise<SystemPreset[]>;
-  /** [self, parent, grandparent, ...] as far as the index reaches; stops at cycles. */
-  chain(name: string): Promise<SystemPreset[]>;
   /**
    * compatible_printers from the nearest preset in the chain that sets it. An empty array is a
    * real value (fdm_filament_common sets []). null when no preset in the chain sets it.
@@ -83,14 +80,10 @@ export interface SystemIndex {
   printerModel(vendorTag: string, printerCode: string): Promise<string | null>;
   /** Model for a parsed name: spelled out (wizard names) or looked up from its code. */
   modelOf(parsed: ParsedPresetName): Promise<string | null>;
-  /** Every vendor-tag + code in the index -> model. Key: 'BBL X1C'. Loads every printer preset. */
-  printerModelMap(): Promise<Map<string, string>>;
 }
 
 const MAX_CHAIN = 32;
 const LOAD_CONCURRENCY = 32;
-// Written as an escape so the source stays plain ASCII.
-const LEADING_BOM = new RegExp('^\uFEFF');
 
 export async function loadSystemIndex(
   fs: PresetFs,
@@ -190,7 +183,6 @@ export async function loadSystemIndex(
     }
     return out;
   };
-  const chain = (name: string): Promise<SystemPreset[]> => walk(name);
 
   // Stops at the first preset that sets it, so most lookups read a single file.
   const effectiveCompatiblePrinters = async (name: string): Promise<string[] | null> =>
@@ -222,22 +214,6 @@ export async function loadSystemIndex(
     return printerModel(pn.vendorTag, pn.printerCode);
   };
 
-  const printerModelMap = async (): Promise<Map<string, string>> => {
-    const keys = new Map<string, [string, string]>();
-    for (const name of entries.keys()) {
-      const pn = parsed(name);
-      if (pn?.vendorTag !== undefined && pn.printerCode !== undefined && pn.model === undefined) {
-        keys.set(`${pn.vendorTag} ${pn.printerCode}`, [pn.vendorTag, pn.printerCode]);
-      }
-    }
-    const out = new Map<string, string>();
-    for (const [key, [tag, code]] of keys) {
-      const model = await printerModel(tag, code);
-      if (model !== null) out.set(key, model);
-    }
-    return out;
-  };
-
   return {
     vendor,
     indexPath,
@@ -255,11 +231,9 @@ export async function loadSystemIndex(
       (await mapLimit([...entries.keys()], LOAD_CONCURRENCY, load)).filter(
         (p): p is SystemPreset => p !== null,
       ),
-    chain,
     effectiveCompatiblePrinters,
     printerModel,
     modelOf,
-    printerModelMap,
   };
 }
 
@@ -267,16 +241,20 @@ async function readIndex(fs: PresetFs, indexPath: string): Promise<Record<string
   let text: string;
   try {
     text = await fs.readText(indexPath);
-  } catch {
-    throw new SystemIndexError(
-      `Could not read ${indexPath}. Is this a Bambu Studio folder, and has Studio been opened at least once?`,
-    );
+  } catch (err) {
+    if (isNotFound(err)) {
+      throw new SystemIndexError(
+        `Could not read ${indexPath}. Is this a Bambu Studio folder, and has Studio been opened at least once?`,
+        { cause: err },
+      );
+    }
+    throw new SystemIndexError(`Could not read ${indexPath}: ${errorMessage(err)}`, { cause: err });
   }
   let value: unknown;
   try {
-    value = JSON.parse(text.replace(LEADING_BOM, ''));
+    value = JSON.parse(stripBom(text));
   } catch (err) {
-    throw new SystemIndexError(`${indexPath} is not valid JSON: ${(err as Error).message}`);
+    throw new SystemIndexError(`${indexPath} is not valid JSON: ${errorMessage(err)}`);
   }
   if (!isRecord(value)) throw new SystemIndexError(`${indexPath} is not a JSON object.`);
   return value;
@@ -331,7 +309,7 @@ async function existingFiles(
       listing = await fs.list(dir);
     } catch (err) {
       // A missing folder just means its presets are missing; any other error means unknown.
-      if (!isNotFound(err)) unreadable ??= { dir, message: (err as Error).message };
+      if (!isNotFound(err)) unreadable ??= { dir, message: errorMessage(err) };
       return;
     }
     for (const f of listing) {
@@ -348,9 +326,9 @@ async function readBody(
 ): Promise<SystemPreset | null> {
   let json: unknown;
   try {
-    json = JSON.parse((await fs.readText(entry.path)).replace(LEADING_BOM, ''));
+    json = JSON.parse(stripBom(await fs.readText(entry.path)));
   } catch (err) {
-    warnings.push(`System preset "${entry.name}" could not be read (${(err as Error).message}).`);
+    warnings.push(`System preset "${entry.name}" could not be read (${errorMessage(err)}).`);
     return null;
   }
   if (!isRecord(json)) {
@@ -367,12 +345,8 @@ async function readBody(
     inherits: str(json['inherits']) ?? '',
     instantiation: json['instantiation'] === 'true' || json['instantiation'] === true,
   };
-  const type = str(json['type']);
   const settingId = str(json['setting_id']);
-  const filamentId = str(json['filament_id']);
-  if (type !== undefined) preset.type = type;
   if (settingId !== undefined) preset.settingId = settingId;
-  if (filamentId !== undefined) preset.filamentId = filamentId;
   const cp = json['compatible_printers'];
   if (Array.isArray(cp)) preset.compatiblePrinters = cp.filter((x) => typeof x === 'string');
   return preset;
@@ -420,10 +394,6 @@ async function mapLimit<T, R>(
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return out;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
 function str(v: unknown): string | undefined {
@@ -510,17 +480,9 @@ function combineIndexes(parts: SystemIndex[], loadWarnings: string[]): SystemInd
       const lists = await Promise.all(parts.map((p) => p.loadAll()));
       return lists.flatMap((list, i) => list.filter((b) => owner(b.name) === parts[i]));
     },
-    chain: (name) => owner(name)?.chain(name) ?? Promise.resolve([]),
     effectiveCompatiblePrinters: (name) =>
       owner(name)?.effectiveCompatiblePrinters(name) ?? Promise.resolve(null),
     printerModel: (tag, code) => firstNonNull((p) => p.printerModel(tag, code)),
     modelOf: (pn) => firstNonNull((p) => p.modelOf(pn)),
-    printerModelMap: async () => {
-      const out = new Map<string, string>();
-      for (const p of parts) {
-        for (const [k, v] of await p.printerModelMap()) if (!out.has(k)) out.set(k, v);
-      }
-      return out;
-    },
   };
 }

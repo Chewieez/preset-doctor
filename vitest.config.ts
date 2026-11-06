@@ -4,7 +4,9 @@ import { defineConfig } from 'vitest/config';
 const coreSrc = (p: string): string =>
   fileURLToPath(new URL(`./packages/core/src/${p}`, import.meta.url));
 
-export default defineConfig({
+// `npm run test:live` (vitest --mode live) also runs the read-only checks against the real
+// Bambu Studio folder. A mode rather than an env var, so the command works in every shell.
+export default defineConfig(({ mode }) => ({
   // Apps import core by package name; test them against core's source, not a possibly stale dist.
   resolve: {
     alias: [
@@ -14,5 +16,6 @@ export default defineConfig({
   },
   test: {
     include: ['packages/*/src/**/*.test.ts', 'apps/*/src/**/*.test.ts'],
+    env: mode === 'live' ? { PRESET_DOCTOR_LIVE: '1' } : {},
   },
-});
+}));

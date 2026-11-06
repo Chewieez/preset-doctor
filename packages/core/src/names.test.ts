@@ -168,7 +168,7 @@ describe('fixture system index names', () => {
   });
 });
 
-// Read-only check against the real install: PRESET_DOCTOR_LIVE=1 npx vitest run names
+// Read-only check against the real install: npm run test:live -- names
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live system index names', () => {
   it('every filament_list name parses', () => {
     const appData = process.env['APPDATA'];

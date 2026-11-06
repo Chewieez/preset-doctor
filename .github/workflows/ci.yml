@@ -2,10 +2,18 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+  # release.yml runs these same checks before it builds the exe.
+  workflow_call:
 
 permissions:
   contents: read
+
+# A newer push to a pull request replaces its run; runs for main (which Pages deploys) always finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
@@ -14,18 +22,33 @@ jobs:
       # Unit tests don't launch Electron, so skip the ~100 MB binary download.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npm run lint
+      - run: npm run format:check
       - run: npm run typecheck
       # Builds every workspace: core, the desktop app (out/) and the web version (apps/web/dist).
       - run: npm run build
       - run: npm test
       # The built web version in the runner's Edge, on a copy of a fixture in browser storage.
       - run: npm run web:e2e
+
+  desktop-e2e:
+    # Launches the built desktop app (so this job needs the Electron binary) on a temp fixture copy.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:e2e

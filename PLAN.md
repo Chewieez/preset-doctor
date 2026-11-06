@@ -10,9 +10,9 @@ Based on SPEC.md (Nov 5, 2026) plus a read-only look at the real `%APPDATA%\Bamb
 | M0 fixtures | Done. `npm run fixtures` writes `healthy`, `broken-r1`, `broken-r4` and `multi-account`, with ids anonymized. |
 | M1, M2 core + CLI | Done. Covers R1 (refined candidate ranking), R4, the R5-lite cloud-sync warning, `fix` (plan, apply, stale check), zip backup and restore, and `scan`/`fix`/`backups` in the CLI. All tests pass. A live read-only scan finds the 18 real orphans, each with one high-confidence fix. |
 | Open questions 1-4 | Still open; they need testing in Studio. Defaults are in SPEC §10. |
-| M3 desktop app | In progress (`apps/desktop`, Electron + electron-vite + electron-builder portable exe). |
+| M3 desktop app | Done (`apps/desktop`, Electron + electron-vite + electron-builder portable exe; e2e smoke test on a temp fixture copy). |
 | Web version | Done (`apps/web`, GitHub Pages). Same UI as the desktop app (`packages/ui`), `fsaFs` over a picked copy of the folder, backups inside it, a required "I've closed Bambu Studio" checkbox, copy-out/copy-back guide. Unit tests on a fake handle, e2e in Edge on OPFS. |
-| M4 ship | README, LICENSE, CI and release workflows, and the issue template are in place. Remaining: screenshots, the first `v*` tag, and posts. |
+| M4 ship | README, LICENSE, CI and release workflows, and the issue template are in place. Screenshots are in docs/screenshots. Remaining: the first `v*` tag, and posts. |
 
 Everything below is the original plan and is kept for reference. Where the two disagree, SPEC §2 and §10 and this status section win.
 
@@ -79,7 +79,7 @@ Tests: Vitest against fixtures via `nodeFs`; `broken-r1` must produce exactly th
 
 - `rules/r4.ts`: parse failure, missing `name`, name != filename stem (fixable: rewrite `name`, and `filament_settings_id[0]` if it equaled the old name; confirm against fixtures), missing sidecar (`info` severity per F2).
 - `fix.ts`: `planFixes(findings, choices) -> Change[]` where `Change = { path, before, after }` (pure), then `applyChanges(fs, changes)`. Diffs come from `before`/`after`, so the UI and `--dry-run` share one code path. R1 change edits `inherits` only, preserving format; `base_id` update behind a flag until open question 1 is answered.
-- `backup.ts`: `backup(fs, userDir) -> backupId` copies the whole `user\` tree to `user_backup_<timestamp>\` via the fs interface (works for both adapters); desktop additionally zips. `listBackups`, `restore(backupId)` (restore = back up current state first, then copy back). Session flag ensures one backup before first write.
+- `backup.ts`: `backup(fs, userDir) -> backupId` copies the whole `user\` tree to `user_backup_<timestamp>\` via the fs interface (works for both adapters); desktop additionally zips. `listBackups`, `restore(backupId)` (restore = back up current state first, then copy back). Session flag ensures one backup before first write. (Shipped instead: zip backups through core on both platforms; see SPEC §6.)
 - CLI: `preset-doctor fix <root> --dry-run` prints unified diffs (use the small `diff` package, or a hand-rolled line diff since changes are one line). `fix <root> --apply --yes` takes high-confidence pre-selected fixes only; refuses if `bambu-studio.exe` is running (`tasklist` check in the CLI's node adapter).
 - **Answer open questions now**, on a copy of the real folder with Studio (shortcut: point Studio at it isn't possible, so: back up `%APPDATA%\BambuStudio`, break one preset by hand, observe, repair with the CLI, observe). Record answers in SPEC.md section 10:
   1. `base_id` needed? 2. Hidden vs Unsupported (sets R1 wording). 3. Cloud sync wins? Does bumping `updated_time` help? 4. Any cache to clear?

@@ -1,10 +1,12 @@
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { PresetFs } from '@preset-doctor/core';
+import { nodeFs, type NodeFsOptions } from '@preset-doctor/core/node';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { IpcResult } from '../shared/api.js';
-import { DoctorService } from './service.js';
+import { DoctorService, type ServiceDeps } from './service.js';
 
 const FIXTURE = fileURLToPath(
   new URL('../../../../packages/core/src/__fixtures__/broken-r1', import.meta.url),
@@ -16,12 +18,13 @@ let root: string;
 let backups: string;
 let studio: () => Promise<boolean>;
 
-function makeService(fake: boolean | null = null): DoctorService {
+function makeService(fake: boolean | null = null, extra: Partial<ServiceDeps> = {}): DoctorService {
   return new DoctorService({
     config: { root, backupsDir: backups, testMode: true, fakeStudioRunning: fake },
     isStudioRunning: () => studio(),
     version: '9.9.9',
     donationUrl: '',
+    ...extra,
   });
 }
 
@@ -155,6 +158,83 @@ describe('DoctorService', () => {
 
     expect(errCode(await s.apply(planId))).toBe('stale');
     expect(await readRoot(other)).toBe(otherBefore);
+  });
+
+  it('refuses a plan whose file was deleted since, before making any backup', async () => {
+    const s = makeService();
+    const { defaults } = ok(await s.scan(root, undefined));
+    const { planId } = ok(await s.plan(defaults, { updateBaseId: true }));
+    await rm(join(root, ...ORPHAN.split('/')));
+    // Stale, not "the backup doesn't include it", and no backup for nothing.
+    expect(errCode(await s.apply(planId))).toBe('stale');
+    expect(await zipCount()).toBe(0);
+
+    // Same with a session backup already made: no second, useless one either.
+    const rescan = ok(await s.scan(root, undefined));
+    ok(await s.apply(ok(await s.plan(rescan.defaults.slice(0, 1), {})).planId));
+    const added = 'user/1000000001/filament/Added Petg 06.json';
+    const text = (await readFile(join(FIXTURE, ...ORPHAN.split('/')), 'utf8')).replace(
+      /"name": "[^"]*"/,
+      '"name": "Added Petg 06"',
+    );
+    await writeFile(join(root, ...added.split('/')), text);
+    const third = ok(await s.scan(root, undefined));
+    const plan = ok(
+      await s.plan(
+        third.defaults.filter((c) => c.presetPath === added),
+        {},
+      ),
+    );
+    await rm(join(root, ...added.split('/')));
+    expect(errCode(await s.apply(plan.planId))).toBe('stale');
+    expect(await zipCount()).toBe(1);
+  });
+
+  it('refuses to write what the backup does not hold, and drops the session', async () => {
+    // A listing that misses ORPHAN (as for a link it can't follow) while reads still work.
+    const orphanName = ORPHAN.slice(ORPHAN.lastIndexOf('/') + 1);
+    let hide = true;
+    const fsFor = (dir: string, options?: NodeFsOptions): PresetFs => {
+      const fs = nodeFs(dir, options);
+      if (resolve(dir) !== resolve(root) || options?.readOnly) return fs;
+      return {
+        ...fs,
+        list: async (d) =>
+          (await fs.list(d)).filter(
+            (e) => !(hide && d === 'user/1000000001/filament' && e.name === orphanName),
+          ),
+      };
+    };
+    const s = makeService(null, { fsFor });
+    const { defaults } = ok(await s.scan(root, undefined));
+    const other = defaults.find((d) => d.presetPath !== ORPHAN)!.presetPath;
+    const orphanBefore = await readRoot(ORPHAN);
+    const otherBefore = await readRoot(other);
+
+    const r = await s.apply(ok(await s.plan(defaults, { updateBaseId: true })).planId);
+    expect(errCode(r)).toBe('failed');
+    expect(r.ok ? '' : r.error.message).toContain(orphanName);
+    expect(r.ok ? '' : r.error.message).toContain('Move those files back');
+    expect(await readRoot(ORPHAN)).toBe(orphanBefore);
+    expect(await readRoot(other)).toBe(otherBefore);
+
+    // The session was dropped, so the next repair makes a backup that holds the file.
+    hide = false;
+    const rescan = ok(await s.scan(root, undefined));
+    const again = ok(await s.apply(ok(await s.plan(rescan.defaults, {})).planId));
+    expect(again.backupIsNew).toBe(true);
+    expect(await zipCount()).toBe(2);
+  });
+
+  it('reports a thrown non-Error as a failure with its text', async () => {
+    const s = makeService(null, {
+      now: () => {
+        throw 'boom';
+      },
+    });
+    const { defaults } = ok(await s.scan(root, undefined));
+    const r = await s.apply(ok(await s.plan(defaults, {})).planId);
+    expect(r).toEqual({ ok: false, error: { code: 'failed', message: 'boom' } });
   });
 
   it('restores a backup, but not while Studio runs', async () => {

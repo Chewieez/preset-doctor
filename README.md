@@ -37,13 +37,16 @@ so there is nothing to install: download it and double-click it.
 **"Windows protected your PC"**: Windows shows this for apps without a paid code-signing
 certificate, and Preset Doctor doesn't have one. Click **More info**, then **Run anyway**. If you
 would rather check it first, the source code is all in this repo and the exe is built from it by
-[GitHub Actions](.github/workflows/release.yml).
+[GitHub Actions](.github/workflows/release.yml). To check that the exe was built here:
+`gh attestation verify PresetDoctor-<version>-portable.exe -R shmehltr/preset-doctor`, or compare
+its hash with `SHA256SUMS.txt` on the release page.
 
 ## Web version (no download)
 
 **[shmehltr.github.io/preset-doctor](https://shmehltr.github.io/preset-doctor/)** runs the same
-app in Chrome or Edge on your computer. Nothing is uploaded: the page reads and changes files on
-your computer only, and its security policy blocks all network requests.
+app in Chrome or Edge on your computer. Nothing is uploaded: once loaded, the page can't connect
+anywhere (its security policy sets `connect-src 'none'`), so your files are only read and changed
+on your computer.
 
 **Which one should I use?**
 
@@ -87,7 +90,9 @@ Browsers aren't allowed to open anything under `%APPDATA%`, so the web version w
 ## Safety
 
 - **Backup first.** Before the first change, it zips your whole `user` folder to
-  `%APPDATA%\PresetDoctor\backups\`. **Restore backup** puts it back with one click.
+  `%APPDATA%\PresetDoctor\backups\`. **Restore a backup…** at the bottom of the window lists your
+  backups; pick one and confirm. Your current presets are backed up first, so a restore can be
+  undone too.
 - **You see every change.** Each repair is shown as a diff before anything is written, and nothing
   is written until you click.
 - **Never writes while Studio is running.** It checks for `bambu-studio.exe` and refuses if Studio is
@@ -108,16 +113,18 @@ scripting. You need [Node.js 24](https://nodejs.org/) and a clone of this repo:
 git clone https://github.com/shmehltr/preset-doctor.git
 cd preset-doctor
 npm ci
-npm run build
+npm run build -w @preset-doctor/core
 
-npx preset-doctor scan                 # list presets and problems (reads only)
-npx preset-doctor fix --dry-run        # show the repairs as diffs (reads only)
-npx preset-doctor fix --apply --yes    # back up, then repair (close Studio first)
-npx preset-doctor backups              # list backups
-npx preset-doctor backups restore <id> --yes
+npm run cli -- scan                 # list presets and problems (reads only)
+npm run cli -- fix --dry-run        # show the repairs as diffs (reads only)
+npm run cli -- fix --apply --yes    # back up, then repair (close Studio first)
+npm run cli -- backups              # list backups
+npm run cli -- backups restore <id> --yes
 ```
 
-`node packages/core/dist/cli.js <command>` works too. Useful options:
+`node packages/core/dist/cli.js <command>` works too. Preset Doctor is not published on npm, so
+don't use `npx`. The commands it prints (`preset-doctor fix ...`) are run the same way, as
+`npm run cli -- fix ...`. Useful options:
 
 | Option | Meaning |
 |---|---|
@@ -138,9 +145,10 @@ candidates.
 
 **What if it picks the wrong parent?**
 Settings you changed yourself (temperatures, flow and so on) stay in your preset. Only the parent
-it builds on changes. If the result looks wrong in Studio, close Studio and click **Restore
-backup** (or run `preset-doctor backups restore <id> --yes`). Then pick a different candidate, or
-leave that preset alone.
+it builds on changes. If the result looks wrong in Studio, close Studio, click **Restore a
+backup…** and restore the backup from before the fix (or run
+`npm run cli -- backups restore <id> --yes`). Then pick a different candidate, or leave that
+preset alone.
 
 **It says "no candidates". Now what?**
 Bambu removed or renamed that filament so much that there is no safe guess. The preset is
@@ -179,15 +187,17 @@ scripts/         fixture generator.
 ```sh
 npm ci
 npm run lint
+npm run format:check
 npm run typecheck
 npm run build
 npm test                       # unit + fixture tests
-PRESET_DOCTOR_LIVE=1 npm test  # also scans your real Studio folder, read-only
+npm run test:live              # also scans your real Studio folder, read-only
 npm run desktop:dist           # build the portable exe into apps/desktop/release/
 npm run desktop:e2e            # desktop end-to-end test on a temp copy of a fixture
 npm run web:dev                # web version with hot reload
 npm run web:build              # static site into apps/web/dist/
 npm run web:e2e                # web end-to-end test in Edge or Chrome
+npm run screenshots            # rerun both e2e tests and rewrite docs/screenshots/*.png
 ```
 
 Why the web version works on a copy: Chromium won't let a web page pick `%APPDATA%` folders at

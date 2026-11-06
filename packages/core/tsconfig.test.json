@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "outDir": ".tsbuild/test",
+    "rootDir": "../..",
+    "types": ["node"],
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/**/*.test.ts",
+    "src/testing/**/*",
+    "../../scripts/**/*.ts",
+    "../../vitest.config.ts"
+  ],
+  "references": [{ "path": "." }]
+}

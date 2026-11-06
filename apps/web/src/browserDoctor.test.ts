@@ -2,9 +2,10 @@ import { fileURLToPath } from 'node:url';
 import type { IpcResult } from '@preset-doctor/ui/contract';
 import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BACKUPS_DIR, BrowserDoctor } from './browserDoctor';
-import { memoryHandleStore, type HandleStore } from './handleStore';
+import { BACKUPS_DIR, BrowserDoctor, type BrowserDeps } from './browserDoctor';
+import type { HandleStore } from './handleStore';
 import { FakeDir, FakeFile, fakeFolder, fakeFolderFromDisk } from './testing/fakeHandle';
+import { memoryHandleStore } from './testing/memoryHandleStore';
 
 const FIXTURE = fileURLToPath(
   new URL('../../../packages/core/src/__fixtures__/broken-r1', import.meta.url),
@@ -17,7 +18,7 @@ let store: HandleStore;
 let picks: (FakeDir | 'cancel')[];
 let downloads: { name: string; data: Uint8Array }[];
 
-function makeDoctor(): BrowserDoctor {
+function makeDoctor(extra: Partial<BrowserDeps> = {}): BrowserDoctor {
   return new BrowserDoctor({
     showDirectoryPicker: async () => {
       const next = picks.shift();
@@ -32,6 +33,7 @@ function makeDoctor(): BrowserDoctor {
     download: (name, data) => downloads.push({ name, data }),
     version: '9.9.9',
     now: () => new Date(2026, 10, 5, 17, 30, 0),
+    ...extra,
   });
 }
 
@@ -126,10 +128,12 @@ describe('BrowserDoctor', () => {
 
     const rescan = ok(await d.scan(root));
     const hidden = rescan.result.presets.filter((p) => p.status === 'hidden');
-    // Left alone: no candidates at all, and one with only unlikely ones (never pre-selected).
+    // Left alone: no candidates at all, one with only unlikely ones, and one whose nozzle size
+    // is unsure (neither is ever pre-selected).
     expect(hidden.map((p) => p.name).sort()).toEqual([
       'Synthetic No Candidates',
       'Synthetic Other Printer Only',
+      'Synthetic Stripped Suffix',
     ]);
     expect(rescan.result.presets.filter((p) => p.status === 'broken')).toHaveLength(0);
   });
@@ -163,6 +167,57 @@ describe('BrowserDoctor', () => {
 
     expect(error(await d.apply(planId)).code).toBe('stale');
     expect(copy.text(other)).toBe(otherBefore);
+  });
+
+  it('refuses a plan whose file was deleted since, before making a backup', async () => {
+    const d = makeDoctor();
+    const root = await picked(d);
+    const { defaults } = ok(await d.scan(root));
+    const { planId } = ok(await d.plan(defaults, { updateBaseId: true }));
+    const name = ORPHAN.slice(ORPHAN.lastIndexOf('/') + 1);
+    copy.dir('user/1000000001/filament').children.delete(name);
+    const other = defaults.find((c) => c.presetPath !== ORPHAN)!.presetPath;
+    const otherBefore = copy.text(other);
+
+    // Stale (scan again), not "the backup doesn't include it".
+    expect(error(await d.apply(planId)).code).toBe('stale');
+    expect(copy.text(other)).toBe(otherBefore);
+    expect(zips()).toEqual([]);
+  });
+
+  it('refuses to write what the backup does not hold', async () => {
+    const d = makeDoctor();
+    const root = await picked(d);
+    const { defaults } = ok(await d.scan(root));
+    const { planId } = ok(await d.plan(defaults, { updateBaseId: true }));
+    // The backup's listing misses ORPHAN, while it can still be read and written by name.
+    const name = ORPHAN.slice(ORPHAN.lastIndexOf('/') + 1);
+    copy.dir('user/1000000001/filament').hidden.add(name);
+    const orphanBefore = copy.text(ORPHAN);
+    const other = defaults.find((c) => c.presetPath !== ORPHAN)!.presetPath;
+    const otherBefore = copy.text(other);
+
+    const e = error(await d.apply(planId));
+    expect(e.code).toBe('failed');
+    expect(e.message).toContain(name);
+    expect(e.message).toContain('Move those files back');
+    expect(copy.text(ORPHAN)).toBe(orphanBefore);
+    expect(copy.text(other)).toBe(otherBefore);
+  });
+
+  it('reports a thrown non-Error as a failure with its text', async () => {
+    const d = makeDoctor({
+      download: () => {
+        throw 'boom';
+      },
+    });
+    const root = await picked(d);
+    const { defaults } = ok(await d.scan(root));
+    const applied = ok(await d.apply(ok(await d.plan(defaults, { updateBaseId: true })).planId));
+    expect(await d.downloadBackup(applied.backup.id)).toEqual({
+      ok: false,
+      error: { code: 'failed', message: 'boom' },
+    });
   });
 
   it('validates choices and the folder it is given', async () => {

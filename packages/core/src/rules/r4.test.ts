@@ -88,6 +88,20 @@ describe('R4 malformed presets', () => {
     expect(f?.explanation).toContain('a Studio system preset is already called');
   });
 
+  it('notes a sidecar that exists but cannot be read, and does not call it missing', async () => {
+    const fs = fakeStudio(SYSTEM, [
+      { name: 'Locked', inherits: 'Generic PLA @BBL X2D', info: INFO },
+    ]);
+    const readText = fs.readText.bind(fs);
+    fs.readText = async (path) => {
+      if (path.endsWith('.info')) throw Object.assign(new Error('busy'), { code: 'EBUSY' });
+      return readText(path);
+    };
+    const findings = await r4(fs);
+    expect(brief(findings)).toEqual(['Locked: info/info Sync file (.info) could not be read']);
+    expect(findings[0]?.explanation).toContain('Could not read the sync file: busy.');
+  });
+
   it('notes a missing sidecar at info level', async () => {
     const fs = fakeStudio(SYSTEM, [{ name: 'Lonely', inherits: 'Generic PLA @BBL X2D' }]);
     expect(brief(await r4(fs))).toEqual(['Lonely: info/info No sync file (.info)']);

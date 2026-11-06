@@ -17,15 +17,11 @@ import {
 } from '@preset-doctor/core';
 
 export interface FsaFsOptions {
-  /** Every write/mkdir/remove throws. Used for scanning and planning. */
+  /** Every write/mkdir throws. Used for scanning and planning. */
   readOnly?: boolean;
 }
 
-export interface FsaFs extends PresetFs {
-  remove(path: string): Promise<void>;
-}
-
-export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {}): FsaFs {
+export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {}): PresetFs {
   const guardWrite = (path: string): void => {
     if (options.readOnly) throw new Error(`Read-only folder, refusing to change: ${path}`);
   };
@@ -137,18 +133,6 @@ export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {
       guardWrite(path);
       const rel = normalizePath(path);
       await dirAt(rel === '' ? [] : rel.split('/'), path, true);
-    },
-    async remove(path) {
-      guardWrite(path);
-      const rel = normalizePath(path);
-      if (rel === '') throw new Error('Refusing to remove the root');
-      const { segments, name } = split(rel);
-      const dir = await dirAt(segments, path);
-      try {
-        await dir.removeEntry(name, { recursive: true });
-      } catch (err) {
-        throw mapError(err, path);
-      }
     },
   };
 }

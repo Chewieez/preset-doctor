@@ -13,18 +13,22 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "vitest run",
+    "test:live": "vitest run --mode live",
     "test:watch": "vitest",
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "fixtures": "node scripts/make-fixtures.ts",
+    "cli": "node packages/core/dist/cli.js",
     "desktop:dev": "npm run dev -w @preset-doctor/desktop",
     "desktop:e2e": "npm run e2e -w @preset-doctor/desktop",
     "desktop:dist": "npm run dist -w @preset-doctor/desktop",
     "web:dev": "npm run dev -w @preset-doctor/web",
     "web:build": "npm run build -w @preset-doctor/web",
     "web:preview": "npm run preview -w @preset-doctor/web",
-    "web:e2e": "npm run e2e -w @preset-doctor/web"
+    "web:e2e": "npm run e2e -w @preset-doctor/web",
+    "screenshots": "npm run e2e -w @preset-doctor/desktop -- --screenshots && npm run e2e -w @preset-doctor/web -- --screenshots"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

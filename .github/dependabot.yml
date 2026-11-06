@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Keeps the workflows off deprecated action majors (e.g. the Node 20 ones).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  # One grouped pull request for npm updates, so CI checks them together.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ['*']

@@ -6,29 +6,53 @@
  * Ranking (the spec's plain " 0.4 nozzle" toggle is not enough: on the X2D the unsuffixed
  * name is the 0.6/0.8 nozzle variant, on the X1C it is the 0.4 one):
  *   high    same stem and printer, and its resolved compatible_printers include
- *           "<model> <target nozzle> nozzle"; or, when compatibility is unknown, the exact
- *           " 0.4 nozzle" toggle of the missing name; or a capitalization-only difference.
- *   medium  same stem and printer, other nozzle.
+ *           "<model> <size> nozzle" for every target size; or, when compatibility is unknown,
+ *           the " 0.4 nozzle" toggle of the missing name when that fits the target; or a
+ *           capitalization-only difference.
+ *   medium  same stem and printer, other or uncertain nozzle.
  *   low     same stem, other printer. Never pre-selected.
- * Only a single high candidate is pre-selected.
+ * A single high candidate is pre-selected. With several, the one the orphan's `.info` base_id
+ * names is pre-selected; with none of them named, nothing is.
  *
- * The target nozzle comes from the missing name's suffix; without one, from the orphan's own
- * compatible_printers (every nozzle it lists for that printer); only when neither says, 0.4.
- * When the orphan lists nozzles, a candidate must cover all of them to rank high.
+ * The target sizes (see describeTarget), strongest evidence first:
+ *   name     the missing name's own suffix ("... 0.6 nozzle").
+ *   compat   the orphan's own compatible_printers for that printer (all must be covered).
+ *   family   neither: every size the profile uses unsuffixed names for on that printer, plus
+ *            0.4. Only a candidate covering all of them is safe; usually none is, so the user
+ *            is asked to pick the nozzle.
+ *   default  the profile has no unsuffixed preset for that printer to learn from: 0.4.
+ * The `.info` base_id is never enough on its own: in real sidecars it often names another
+ * nozzle or printer than the preset's own, existing parent (about a third on the machine this was
+ * built on; `node scripts/r1-simulate.ts` prints the count), so it only breaks ties between
+ * high candidates and puts the preset it names first among medium ones.
  */
+import { getInfoValue, INFO_KEYS } from '../infoFile.js';
 import {
   DEFAULT_NOZZLE,
-  parseCompatiblePrinter,
   parsePresetName,
   sameNozzle,
   toggleDefaultNozzleSuffix,
   type ParsedPresetName,
 } from '../names.js';
 import { chain, presetName } from '../resolve.js';
-import type { Candidate, Confidence, Finding, UserPreset } from '../types.js';
+import {
+  RULE_IDS,
+  type Candidate,
+  type Confidence,
+  type Finding,
+  type UserPreset,
+} from '../types.js';
 import type { RuleContext } from './context.js';
+import {
+  certainUnsuffixedNozzles,
+  coversAll,
+  nozzlesFor,
+  ownCompat,
+  possibleUnsuffixedNozzles,
+  unsuffixedConvention,
+} from './r1Nozzles.js';
 
-export const R1_ID = 'R1_ORPHANED_PARENT';
+export const R1_ID = RULE_IDS.orphanedParent;
 
 /** Other-printer candidates are rarely right; keep the list short enough to read. */
 const MAX_LOW_CANDIDATES = 10;
@@ -120,18 +144,24 @@ async function orphanFinding(
   return finding;
 }
 
+/** Where the target nozzle sizes came from; see the module comment. */
+type NozzleSource = 'name' | 'compat' | 'family' | 'default';
+
 /** What the missing parent was for: its parsed name, printer model and nozzle(s). */
 interface Target {
   missing: string;
   parsed: ParsedPresetName | null;
   model: string | null;
-  /** Nozzles the parent was for; never empty. */
+  /** Sizes a candidate must cover to rank high; never empty. */
   nozzles: string[];
+  source: NozzleSource;
   /**
    * Nozzles the orphan itself lists for the model in its compatible_printers ([] when it lists
    * none). A candidate that doesn't cover these is never ranked high.
    */
   listed: string[];
+  /** base_id from the orphan's `.info` sidecar: the setting_id it was made from, per Studio. */
+  baseId?: string;
 }
 
 async function describeTarget(
@@ -143,15 +173,45 @@ async function describeTarget(
   const model = parsed ? await ctx.system.modelOf(parsed) : null;
   // The real "... 06" presets list only the 0.6 nozzle, even when the missing name has no suffix.
   const listed = model === null ? [] : nozzlesFor(ownCompat(orphan.json) ?? [], model);
-  const nozzles =
-    parsed?.nozzle !== undefined ? [parsed.nozzle] : listed.length > 0 ? listed : [DEFAULT_NOZZLE];
-  return { missing, parsed, model, nozzles, listed };
+  const target: Target = { missing, parsed, model, listed, nozzles: [], source: 'default' };
+  const baseId = orphan.info ? getInfoValue(orphan.info, INFO_KEYS.baseId)?.trim() : undefined;
+  if (baseId) target.baseId = baseId;
+
+  if (parsed?.nozzle !== undefined) {
+    target.nozzles = [parsed.nozzle];
+    target.source = 'name';
+  } else if (listed.length > 0) {
+    target.nozzles = listed;
+    target.source = 'compat';
+  } else {
+    const possible =
+      parsed && model !== null
+        ? possibleUnsuffixedNozzles(await unsuffixedConvention(parsed, model, ctx.system))
+        : null;
+    target.nozzles = possible ?? [DEFAULT_NOZZLE];
+    target.source = possible ? 'family' : 'default';
+  }
+  return target;
+}
+
+/** True when the missing name leaves the nozzle open and the profile says it varies. */
+function nozzleUnsure(target: Target): boolean {
+  return target.source === 'family' && target.nozzles.length > 1;
 }
 
 /** True when a candidate for `nozzles` covers every target nozzle and fits the orphan's list. */
 function fitsTarget(nozzles: readonly string[], target: Target): boolean {
   const has = (t: string): boolean => nozzles.some((n) => sameNozzle(n, t));
-  return target.nozzles.every(has) && (target.listed.length === 0 || target.listed.some(has));
+  return (
+    coversAll(nozzles, target.nozzles) && (target.listed.length === 0 || target.listed.some(has))
+  );
+}
+
+/** Sizes a candidate surely covers when its compatibility is unknown: suffix or convention. */
+async function nameNozzles(c: Pooled, target: Target, ctx: RuleContext): Promise<string[]> {
+  if (c.parsed.nozzle !== undefined) return [c.parsed.nozzle];
+  if (target.model === null) return [DEFAULT_NOZZLE];
+  return certainUnsuffixedNozzles(await unsuffixedConvention(c.parsed, target.model, ctx.system));
 }
 
 interface Pooled {
@@ -166,9 +226,13 @@ interface Ranked {
   /** How a high candidate was found; drives the explanation wording. */
   via: 'compat' | 'name' | 'other';
   sortKey: number;
+  /** Its setting_id is the orphan's base_id. */
+  fromBaseId: boolean;
 }
 
 const CONFIDENCE_ORDER: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
+
+const BASE_ID_NOTE = "Your preset's sync file (.info) also names it.";
 
 async function rankCandidates(
   target: Target,
@@ -181,12 +245,16 @@ async function rankCandidates(
 
   for (const c of pool) {
     const mine = c.source === 'user' ? ' (one of your own presets)' : '';
-    const push = async (
+    // base_id in a sidecar refers to system presets; leave it alone for user parents.
+    const settingId =
+      c.source === 'system' ? (await ctx.system.load(c.name))?.settingId : undefined;
+    const fromBaseId = target.baseId !== undefined && settingId === target.baseId;
+    const push = (
       confidence: Confidence,
       reason: string,
       via: Ranked['via'],
       sortKey = 0,
-    ): Promise<void> => {
+    ): void => {
       const candidate: Candidate = {
         name: c.name,
         confidence,
@@ -194,21 +262,18 @@ async function rankCandidates(
         preselected: false,
         source: c.source,
       };
-      // base_id in a sidecar refers to system presets; leave it alone for user parents.
-      const settingId =
-        c.source === 'system' ? (await ctx.system.load(c.name))?.settingId : undefined;
       if (settingId !== undefined) candidate.settingId = settingId;
-      ranked.push({ candidate, via, sortKey });
+      ranked.push({ candidate, via, sortKey, fromBaseId });
     };
 
     if (c.name.toLowerCase() === target.missing.toLowerCase()) {
-      await push('high', 'Same name, only the capitalization differs.', 'name');
+      push('high', 'Same name, only the capitalization differs.', 'name');
       continue;
     }
     if (!target.parsed || !(await samePrinter(target, c.parsed, ctx))) {
       const own = c.parsed.nozzle ?? DEFAULT_NOZZLE;
       const nozzleMatch = target.nozzles.some((t) => sameNozzle(own, t)) ? 0 : 1;
-      await push(
+      push(
         'low',
         `Same filament, but for a different printer (${printerLabel(c.parsed)}).`,
         'other',
@@ -222,32 +287,45 @@ async function rankCandidates(
     if (target.model !== null && known) {
       const nozzles = nozzlesFor(known, target.model);
       if (fitsTarget(nozzles, target)) {
-        await push(
-          'high',
-          `Bambu's current preset for the ${target.model} with a ${joinList(target.nozzles)} mm nozzle.`,
-          'compat',
+        const reason = nozzleUnsure(target)
+          ? `Bambu's current preset for the ${target.model}, for every nozzle that name could mean (${joinList(target.nozzles, 'and')} mm).`
+          : `Bambu's current preset for the ${target.model} with a ${joinList(target.nozzles)} mm nozzle.`;
+        push('high', fromBaseId ? `${reason} ${BASE_ID_NOTE}` : reason, 'compat');
+      } else if (
+        nozzles.length > 0 &&
+        (nozzleUnsure(target) || (fromBaseId && !hardEvidence(target)))
+      ) {
+        // Nothing firm says which nozzle the parent was for: list the sizes neutrally, smallest
+        // first, with the preset the sidecar names on top.
+        push(
+          'medium',
+          fromBaseId
+            ? `Your preset's sync file (.info) says it was made from this preset, which is for the ${joinList(nozzles)} mm nozzle. That file is not always right, so check it matches your nozzle.`
+            : `Same filament and printer, for the ${joinList(nozzles)} mm nozzle.`,
+          'other',
+          fromBaseId ? -1 : Math.min(...nozzles.map(Number)),
         );
       } else if (nozzles.length > 0) {
         const overlap = nozzles.some((n) => target.nozzles.some((t) => sameNozzle(n, t)));
-        await push(
+        push(
           'medium',
           `Same filament and printer, but ${overlap ? 'only ' : ''}for the ${joinList(nozzles)} mm nozzle.`,
           'other',
           overlap ? 0 : nozzleDistance(nozzles, target.nozzles),
         );
       } else {
-        await push(
+        push(
           'medium',
           `Same filament and printer name, but it does not list the ${target.model}.`,
           'other',
           99,
         );
       }
-    } else if (c.name === toggled && fitsTarget([c.parsed.nozzle ?? DEFAULT_NOZZLE], target)) {
+    } else if (c.name === toggled && fitsTarget(await nameNozzles(c, target, ctx), target)) {
       const verb = target.missing.endsWith(` ${DEFAULT_NOZZLE} nozzle`) ? 'removed' : 'added';
-      await push('high', `Same name with " ${DEFAULT_NOZZLE} nozzle" ${verb}.`, 'name');
+      push('high', `Same name with " ${DEFAULT_NOZZLE} nozzle" ${verb}.`, 'name');
     } else {
-      await push(
+      push(
         'medium',
         "Same filament and printer; Preset Doctor couldn't tell which nozzle it is for.",
         'other',
@@ -267,9 +345,22 @@ async function rankCandidates(
     ...ranked.filter((r) => r.candidate.confidence !== 'low'),
     ...ranked.filter((r) => r.candidate.confidence === 'low').slice(0, MAX_LOW_CANDIDATES),
   ];
-  const high = out.filter((r) => r.candidate.confidence === 'high');
-  if (high.length === 1) high[0]!.candidate.preselected = true;
+  const pick = preselection(out);
+  if (pick) pick.candidate.preselected = true;
   return out;
+}
+
+/** The single high candidate, or among several the one the orphan's base_id names. */
+function preselection(ranked: Ranked[]): Ranked | undefined {
+  const high = ranked.filter((r) => r.candidate.confidence === 'high');
+  if (high.length === 1) return high[0];
+  const named = high.filter((r) => r.fromBaseId);
+  return named.length === 1 ? named[0] : undefined;
+}
+
+/** The target sizes come from the name or the orphan's own list, not from a guess. */
+function hardEvidence(target: Target): boolean {
+  return target.source === 'name' || target.source === 'compat';
 }
 
 /** System and user presets with the same filament stem (case-insensitive). */
@@ -339,23 +430,6 @@ async function effectiveCompat(c: Pooled, ctx: RuleContext): Promise<readonly st
   return null;
 }
 
-function ownCompat(json: Record<string, unknown> | undefined): readonly string[] | undefined {
-  const v = json?.['compatible_printers'];
-  return Array.isArray(v) && v.every((x) => typeof x === 'string') ? (v as string[]) : undefined;
-}
-
-/** Distinct nozzle sizes listed for one printer model, in list order. */
-function nozzlesFor(compat: readonly string[], model: string): string[] {
-  const out: string[] = [];
-  for (const entry of compat) {
-    const cp = parseCompatiblePrinter(entry);
-    if (cp && cp.model === model && !out.some((n) => sameNozzle(n, cp.nozzle))) {
-      out.push(cp.nozzle);
-    }
-  }
-  return out;
-}
-
 /** Distance from the closest candidate nozzle to the closest target nozzle, in mm. */
 function nozzleDistance(nozzles: string[], targets: string[]): number {
   return Math.min(...nozzles.flatMap((n) => targets.map((t) => Math.abs(Number(n) - Number(t)))));
@@ -373,21 +447,34 @@ function explain(target: Target, ranked: Ranked[], version: string | null): stri
     : "in Bambu Studio's system presets";
   const intro = `This preset is based on "${target.missing}", which no longer exists ${where}, so Studio hides it.`;
   const high = ranked.filter((r) => r.candidate.confidence === 'high');
+  const quote = (r: Ranked): string =>
+    r.candidate.source === 'user'
+      ? `your own preset "${r.candidate.name}"`
+      : `"${r.candidate.name}"`;
 
   if (high.length === 1) {
     const best = high[0]!;
-    const quoted =
-      best.candidate.source === 'user'
-        ? `your own preset "${best.candidate.name}"`
-        : `"${best.candidate.name}"`;
     const why =
-      best.via === 'compat'
-        ? `, which Bambu now uses for the ${joinList(target.nozzles)} mm nozzle`
-        : ', which looks like the same preset under its current name';
-    return `${intro} The closest match is ${quoted}${why}.`;
+      best.via !== 'compat'
+        ? ', which looks like the same preset under its current name'
+        : nozzleUnsure(target)
+          ? `, which Bambu now uses for all of the ${joinList(target.nozzles, 'and')} mm nozzles`
+          : `, which Bambu now uses for the ${joinList(target.nozzles)} mm nozzle`;
+    return `${intro} The closest match is ${quote(best)}${why}.`;
   }
   if (high.length > 1) {
+    const named = preselection(ranked);
+    if (named) {
+      return `${intro} ${high.length} presets look like good replacements; ${quote(named)} is pre-selected because your preset's sync file (.info) names it.`;
+    }
     return `${intro} ${high.length} presets look like good replacements; pick the one that matches your printer and nozzle.`;
+  }
+  if (nozzleUnsure(target) && ranked.some((r) => r.candidate.confidence === 'medium')) {
+    return (
+      `${intro} Its name doesn't include a nozzle size, and on the ${target.model ?? 'printer'} ` +
+      `presets named that way are for different nozzles, so Preset Doctor can't tell which ` +
+      `nozzle it was for. Pick the preset for the nozzle you print with.`
+    );
   }
   if (ranked.length > 0) {
     return `${intro} There is no exact replacement. The closest options are listed below; only pick one if it matches your printer and nozzle.`;
@@ -395,9 +482,9 @@ function explain(target: Target, ranked: Ranked[], version: string | null): stri
   return `${intro} Preset Doctor found no similar preset to switch to. You can recreate it in Bambu Studio from a current preset and copy your settings over.`;
 }
 
-function joinList(items: string[]): string {
+function joinList(items: string[], conjunction: 'or' | 'and' = 'or'): string {
   if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+  return `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}`;
 }
 
 function eqi(a: string | undefined, b: string | undefined): boolean {

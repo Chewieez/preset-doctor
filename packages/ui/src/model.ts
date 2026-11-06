@@ -5,10 +5,12 @@ import type {
   FixChoice,
   PresetStatus,
   PresetSummary,
+  RuleId,
   ScanResult,
 } from '@preset-doctor/core';
 
-export const CLOUD_SYNC_RULE = 'R5_CLOUD_SYNC';
+// Not imported from core: this module only takes types from it. `satisfies` keeps it in step.
+export const CLOUD_SYNC_RULE = 'R5_CLOUD_SYNC' satisfies RuleId;
 
 export const STATUS_LABEL: Record<PresetStatus, string> = {
   ok: 'OK',
@@ -121,7 +123,7 @@ export function orderFindings(findings: readonly Finding[]): Finding[] {
 }
 
 export function displayName(p: PresetSummary): string {
-  return p.name ?? fileStemOf(p.path);
+  return p.name ?? p.fileStem;
 }
 
 export function visiblePresets(
@@ -161,6 +163,48 @@ export function presetFilesIn(paths: readonly string[]): number {
   return paths.filter((p) => p.toLowerCase().endsWith('.json')).length;
 }
 
+/** Title and lines of a result banner. */
+export interface NoticeText {
+  title: string;
+  lines: string[];
+}
+
+/** The banner after a repair. `backupsDir` is where the web version keeps its backups. */
+export function repairNotice(
+  r: { written: readonly string[]; backup: { id: string }; backupIsNew: boolean },
+  ctx: { web: boolean; cloud: boolean; backupsDir: string },
+): NoticeText {
+  const n = presetFilesIn(r.written);
+  const where = ctx.web ? `, in the ${ctx.backupsDir} folder` : '';
+  return {
+    title: `Repaired ${n} preset${n === 1 ? '' : 's'}.`,
+    lines: [
+      r.backupIsNew
+        ? `Your presets were backed up first (backup ${r.backup.id}${where}).`
+        : `Your presets were already backed up earlier in this session (backup ${r.backup.id}${where}).`,
+      ctx.web
+        ? 'Next: copy the repaired files back into Bambu Studio (see below), then open Studio and check that your presets are back.'
+        : 'Next: open Bambu Studio and check that your presets are back. If anything looks wrong, use "Restore a backup".',
+      ...(ctx.cloud
+        ? [
+            'Cloud sync is on: if a repair comes undone after Studio syncs, turn sync off and repair again.',
+          ]
+        : []),
+    ],
+  };
+}
+
+/** The banner after a restore that put `count` files back. */
+export function restoreNotice(backupId: string, count: number, web: boolean): NoticeText {
+  return {
+    title: `Restored backup ${backupId}.`,
+    lines: [
+      `${count} files were put back. The state before the restore was backed up too.`,
+      ...(web ? ['Copy the user folder back into Bambu Studio to finish (see below).'] : []),
+    ],
+  };
+}
+
 /** A '/'-joined path as Windows shows it: `user/1/a.json` -> `user\1\a.json`. */
 export function windowsPath(path: string): string {
   return path.split('/').join('\\');
@@ -169,9 +213,4 @@ export function windowsPath(path: string): string {
 /** Both lists of changed files together, each path once, sorted. */
 export function mergePaths(a: readonly string[], b: readonly string[]): string[] {
   return [...new Set([...a, ...b])].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
-}
-
-function fileStemOf(path: string): string {
-  const base = path.slice(path.lastIndexOf('/') + 1);
-  return base.endsWith('.json') ? base.slice(0, -'.json'.length) : base;
 }

@@ -3,7 +3,14 @@ import type { JsonFormat } from './jsonFile.js';
 
 export type Severity = 'error' | 'warning' | 'info';
 
-export type RuleId = 'R1_ORPHANED_PARENT' | 'R4_MALFORMED' | 'R5_CLOUD_SYNC';
+/** Every rule's id, in one place; rules export their own as R1_ID, R4_ID and R5_ID. */
+export const RULE_IDS = {
+  orphanedParent: 'R1_ORPHANED_PARENT',
+  malformed: 'R4_MALFORMED',
+  cloudSync: 'R5_CLOUD_SYNC',
+} as const;
+
+export type RuleId = (typeof RULE_IDS)[keyof typeof RULE_IDS];
 
 /** How the preset looks from inside Bambu Studio. */
 export type PresetStatus = 'ok' | 'hidden' | 'broken' | 'info';
@@ -27,7 +34,7 @@ export type ProposedFix =
   { kind: 'setInherits'; candidates: Candidate[] } | { kind: 'renamePreset'; newName: string };
 
 export interface Finding {
-  ruleId: RuleId | (string & Record<never, never>);
+  ruleId: RuleId;
   severity: Severity;
   /** Root-relative path of the preset JSON (or of BambuStudio.conf for scan-level findings). */
   presetPath: string;
@@ -67,12 +74,16 @@ export interface UserPreset {
   infoPath: string;
   info?: InfoFile;
   infoRaw?: string;
+  /** Why an existing .info sidecar could not be read (locked, a folder, ...). */
+  infoError?: string;
 }
 
 /** One row of the results table. Every preset gets one, including healthy ones. */
 export interface PresetSummary {
   accountId: string;
   path: string;
+  /** File name without '.json' (in any case); what to show when there is no name. */
+  fileStem: string;
   name?: string;
   inherits?: string;
   isBase: boolean;
@@ -80,7 +91,7 @@ export interface PresetSummary {
   status: PresetStatus;
   /** One plain-English line for the table, e.g. 'Parent "X" is missing'. */
   reason: string;
-  ruleIds: string[];
+  ruleIds: RuleId[];
 }
 
 export interface AccountSummary {

@@ -1,4 +1,5 @@
-import { isNotFound, type PresetFs } from './fs.js';
+import { errorMessage, isNotFound, type PresetFs } from './fs.js';
+import { isRecord, stripBom } from './jsonFile.js';
 
 /** Root-relative path of Studio's app config. */
 export const STUDIO_CONF_PATH = 'BambuStudio.conf';
@@ -8,8 +9,6 @@ export interface StudioConf {
   found: boolean;
   /** app.sync_user_preset: when true, the cloud copy of presets may overwrite local repairs. */
   syncUserPreset?: boolean;
-  /** The "app" section, for later rules that need other settings. */
-  app?: Record<string, unknown>;
   /** Why the file could not be read or parsed, if so. The values above may still be filled in. */
   error?: string;
 }
@@ -27,18 +26,18 @@ export async function readStudioConf(
     text = await fs.readText(path);
   } catch (err) {
     if (isNotFound(err)) return { found: false };
-    return { found: true, error: `Could not read ${path}: ${(err as Error).message}` };
+    return { found: true, error: `Could not read ${path}: ${errorMessage(err)}` };
   }
   return parseStudioConf(text);
 }
 
 export function parseStudioConf(text: string): StudioConf {
-  const json = stripTrailer(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  const json = stripTrailer(stripBom(text));
   try {
     const value: unknown = JSON.parse(json);
-    const app = isObject(value) ? value['app'] : undefined;
-    if (!isObject(app)) return { found: true, error: 'No "app" section in BambuStudio.conf.' };
-    const conf: StudioConf = { found: true, app };
+    const app = isRecord(value) ? value['app'] : undefined;
+    if (!isRecord(app)) return { found: true, error: 'No "app" section in BambuStudio.conf.' };
+    const conf: StudioConf = { found: true };
     const sync = toBool(app['sync_user_preset']);
     if (sync !== undefined) conf.syncUserPreset = sync;
     return conf;
@@ -46,7 +45,7 @@ export function parseStudioConf(text: string): StudioConf {
     // A damaged or half-written file: still try to find the one flag we care about.
     const conf: StudioConf = {
       found: true,
-      error: `BambuStudio.conf is not valid JSON: ${(err as Error).message}`,
+      error: `BambuStudio.conf is not valid JSON: ${errorMessage(err)}`,
     };
     const m = /"sync_user_preset"\s*:\s*("?)(true|false|1|0)\1/.exec(json);
     const sync = m ? toBool(m[2]) : undefined;
@@ -72,8 +71,4 @@ function toBool(v: unknown): boolean | undefined {
   if (v === 'true' || v === '1' || v === 1) return true;
   if (v === 'false' || v === '0' || v === 0) return false;
   return undefined;
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }

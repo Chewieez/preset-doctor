@@ -1,4 +1,5 @@
 import {
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -54,13 +55,8 @@ describe('nodeFs', () => {
     await expect(fs.writeText('a.txt', 'x')).rejects.toThrow(/Read-only/);
     await expect(fs.writeBytes('b.bin', new Uint8Array())).rejects.toThrow(/Read-only/);
     await expect(fs.mkdir('d')).rejects.toThrow(/Read-only/);
-    await expect(fs.remove('a.txt')).rejects.toThrow(/Read-only/);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('keep');
     expect(await fs.readText('a.txt')).toBe('keep');
-  });
-
-  it('refuses to remove the root', async () => {
-    await expect(nodeFs(tempRoot()).remove('')).rejects.toThrow(/root/);
   });
 
   it('lists folders behind a junction or symlink, so a backup includes them', async () => {
@@ -93,6 +89,44 @@ describe('nodeFs', () => {
       { name: 'link.json', kind: 'file' },
       { name: 'real.json', kind: 'file' },
     ]);
+  });
+
+  it('names the link when one cannot be followed', async () => {
+    // Two junctions pointing at each other: stat fails with ELOOP, as for an unreachable target.
+    const root = tempRoot({ 'd/real.json': '{}' });
+    symlinkSync(join(root, 'd', 'b'), join(root, 'd', 'a'), 'junction');
+    symlinkSync(join(root, 'd', 'a'), join(root, 'd', 'b'), 'junction');
+    const err = await nodeFs(root)
+      .list('d')
+      .catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/^Can't follow the link .*[\\/]d[\\/]a \(ELOOP\)\. /);
+    expect((err as Error).message).toContain('OneDrive');
+    expect((err as Error).cause).toMatchObject({ code: 'ELOOP' });
+  });
+
+  it('writes through a file symlink to its target and keeps the link', async (ctx) => {
+    const root = tempRoot({ 'elsewhere/real.json': 'old', 'd/keep.txt': '' });
+    const link = join(root, 'd', 'link.json');
+    try {
+      symlinkSync(join(root, 'elsewhere', 'real.json'), link, 'file');
+    } catch (err) {
+      // Windows only allows file symlinks with Developer Mode or admin rights.
+      if ((err as NodeJS.ErrnoException).code === 'EPERM') ctx.skip();
+      throw err;
+    }
+    await nodeFs(root).writeText('d/link.json', 'new');
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(readFileSync(join(root, 'elsewhere', 'real.json'), 'utf8')).toBe('new');
+    expect(readdirSync(join(root, 'd')).sort()).toEqual(['keep.txt', 'link.json']);
+  });
+
+  it('writes into a folder behind a junction', async () => {
+    const elsewhere = tempRoot({ 'Foo.json': 'old' });
+    const root = tempRoot({ 'user/thumb.bin': 'x' });
+    symlinkSync(elsewhere, join(root, 'user', 'filament'), 'junction');
+    await nodeFs(root).writeText('user/filament/Foo.json', 'new');
+    expect(readFileSync(join(elsewhere, 'Foo.json'), 'utf8')).toBe('new');
+    expect(readdirSync(elsewhere)).toEqual(['Foo.json']);
   });
 
   it('reads a fixture folder (read-only)', async () => {

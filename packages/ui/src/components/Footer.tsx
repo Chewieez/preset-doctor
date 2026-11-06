@@ -1,4 +1,4 @@
-import { api, call } from '../api';
+import { api } from '../api';
 
 interface Props {
   version: string;
@@ -19,7 +19,8 @@ export function Footer({ version, donationUrl, onRestore }: Props) {
         <button
           type="button"
           className="btn link"
-          onClick={() => void call(api.openDonationPage())}
+          // The raw IpcResult never rejects, and a failed opener has nothing to show.
+          onClick={() => void api.openDonationPage()}
         >
           Support this project
         </button>
