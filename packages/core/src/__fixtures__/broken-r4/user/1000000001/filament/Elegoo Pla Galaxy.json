@@ -1,0 +1,42 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_max_volumetric_speed": [
+        "20",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Elegoo Pla galaxy"
+    ],
+    "from": "User",
+    "inherits": "Bambu PLA Galaxy @BBL X2D 0.4 nozzle",
+    "name": "Elegoo Pla galaxy",
+    "nozzle_temperature": [
+        "221",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "225",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "textured_plate_temp": [
+        "58"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "61"
+    ],
+    "version": "2.8.0.6"
+}

@@ -1,0 +1,57 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_max_volumetric_speed": [
+        "16",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_retraction_length": [
+        "1",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_retraction_speed": [
+        "35",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Sunlu Wood PLA"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @BBL X2D 0.4 nozzle",
+    "name": "Sunlu Wood PLA",
+    "nozzle_temperature": [
+        "213",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "218",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "220"
+    ],
+    "nozzle_temperature_range_low": [
+        "200"
+    ],
+    "textured_plate_temp": [
+        "54"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "58"
+    ],
+    "version": "2.8.0.6"
+}

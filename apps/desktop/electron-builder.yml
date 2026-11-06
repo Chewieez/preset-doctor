@@ -1,0 +1,25 @@
+# Portable Windows build: one unsigned .exe, no installer. `npm run dist -w apps/desktop`.
+appId: io.github.presetdoctor.desktop
+productName: Preset Doctor
+copyright: Preset Doctor contributors. Not affiliated with Bambu Lab.
+directories:
+  output: release
+  buildResources: build
+# electron-vite bundles everything (core, React, fflate) into out/, so no node_modules ship.
+files:
+  - out/**
+  - resources/**
+  - package.json
+  - '!**/*.map'
+asar: true
+npmRebuild: false
+electronLanguages:
+  - en-US
+win:
+  target:
+    - target: portable
+      arch: x64
+  icon: build/icon.ico
+portable:
+  artifactName: PresetDoctor-${version}-portable.exe
+publish: null

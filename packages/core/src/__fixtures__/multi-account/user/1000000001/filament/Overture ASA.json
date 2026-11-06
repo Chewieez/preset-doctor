@@ -1,0 +1,69 @@
+{
+    "close_additional_fan_first_x_layers": [
+        "0"
+    ],
+    "eng_plate_temp": [
+        "92"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "95"
+    ],
+    "fan_max_speed": [
+        "0"
+    ],
+    "fan_min_speed": [
+        "0"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Overture ASA"
+    ],
+    "from": "User",
+    "hot_plate_temp": [
+        "92"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "95"
+    ],
+    "inherits": "Generic ASA @BBL X2D 0.4 nozzle",
+    "name": "Overture ASA",
+    "nozzle_temperature": [
+        "263",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "267",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "270"
+    ],
+    "overhang_fan_speed": [
+        "20"
+    ],
+    "reduce_fan_stop_start_freq": [
+        "0"
+    ],
+    "slow_down_min_speed": [
+        "30",
+        "20",
+        "20",
+        "20"
+    ],
+    "textured_plate_temp": [
+        "92"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "95"
+    ],
+    "version": "2.8.0.6"
+}

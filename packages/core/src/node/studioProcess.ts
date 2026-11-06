@@ -1,0 +1,122 @@
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import * as nodePath from 'node:path';
+
+/** Process names Bambu Studio has used. Compared case-insensitively, with or without `.exe`. */
+export const STUDIO_PROCESS_NAMES = ['bambu-studio', 'BambuStudio'] as const;
+
+/** Runs a program and resolves with its stdout. Injectable so tests need no real processes. */
+export type CommandRunner = (file: string, args: string[]) => Promise<string>;
+
+export interface StudioProcessOptions {
+  platform?: NodeJS.Platform;
+  run?: CommandRunner;
+  /** For finding %SystemRoot%. Default process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** Default fs.existsSync. */
+  fileExists?: (path: string) => boolean;
+}
+
+/**
+ * The process-list program, by absolute path. A bare "tasklist" would also be looked up in the
+ * current folder first on Windows, so a planted tasklist.exe (say, in Downloads) would run and
+ * could claim Studio is closed.
+ */
+export function processListProgram(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+  fileExists: (path: string) => boolean = existsSync,
+): string {
+  if (platform === 'win32') {
+    const systemRoot = env.SystemRoot || env.SYSTEMROOT || env.windir || 'C:\\Windows';
+    return nodePath.win32.join(systemRoot, 'System32', 'tasklist.exe');
+  }
+  return fileExists('/bin/ps') ? '/bin/ps' : '/usr/bin/ps';
+}
+
+const defaultRunner: CommandRunner = (file, args) =>
+  new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
+
+/**
+ * True when Bambu Studio is running. Throws if the process list cannot be read, so callers can
+ * tell "not running" apart from "could not check" and refuse to write in the second case.
+ */
+export async function isStudioRunning(options: StudioProcessOptions = {}): Promise<boolean> {
+  const platform = options.platform ?? process.platform;
+  const run = options.run ?? defaultRunner;
+  const program = processListProgram(platform, options.env, options.fileExists);
+  const names =
+    platform === 'win32'
+      ? // Unfiltered list: one call covers both names, and the CSV first column is not localized.
+        parseTasklistCsv(await run(program, ['/FO', 'CSV', '/NH']))
+      : parsePsOutput(await run(program, ['-A', '-o', 'comm=']));
+  // An unfiltered list always has system processes, so an empty one means it couldn't be read.
+  if (names.length === 0) throw new Error('Could not read the process list.');
+  return names.some(isStudioProcessName);
+}
+
+export function isStudioProcessName(name: string): boolean {
+  const n = name.toLowerCase().replace(/\.exe$/, '');
+  return STUDIO_PROCESS_NAMES.some((s) => s.toLowerCase() === n);
+}
+
+/** Image names from `tasklist /FO CSV /NH`: the first quoted field of each line. */
+export function parseTasklistCsv(output: string): string[] {
+  const names: string[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const m = /^"([^"]*)"/.exec(line.trim());
+    if (m?.[1]) names.push(m[1]);
+  }
+  return names;
+}
+
+/** Program names from `ps -A -o comm=`, which may be full paths (macOS). */
+export function parsePsOutput(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    .map((l) => l.slice(l.lastIndexOf('/') + 1));
+}
+
+export interface DefaultPaths {
+  /** The Bambu Studio data folder (contains `user/` and `system/`). */
+  studioRoot: string;
+  /** Where Preset Doctor keeps its backup zips. Deliberately outside the Bambu Studio folder. */
+  backupsDir: string;
+}
+
+export interface DefaultPathsOptions {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+}
+
+/** Windows: `%APPDATA%\BambuStudio` and `%APPDATA%\PresetDoctor\backups`. */
+export function defaultPaths(options: DefaultPathsOptions = {}): DefaultPaths {
+  const platform = options.platform ?? process.platform;
+  const env = options.env ?? process.env;
+  const home = options.home ?? homedir();
+  let base: string;
+  let path: typeof nodePath.win32;
+  if (platform === 'win32') {
+    path = nodePath.win32;
+    base = env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  } else {
+    path = nodePath.posix;
+    base =
+      platform === 'darwin'
+        ? path.join(home, 'Library', 'Application Support')
+        : env.XDG_CONFIG_HOME || path.join(home, '.config');
+  }
+  return {
+    studioRoot: path.join(base, 'BambuStudio'),
+    backupsDir: path.join(base, 'PresetDoctor', 'backups'),
+  };
+}

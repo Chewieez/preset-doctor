@@ -1,0 +1,54 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Direct Drive E3D High Flow",
+        "Bowden Standard",
+        "Bowden High Flow",
+        "Bowden E3D High Flow"
+    ],
+    "filament_settings_id": [
+        "sunlu pla+ 2.0"
+    ],
+    "filament_z_hop": [
+        "0.55",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "from": "User",
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "inherits": "Bambu PLA Matte @BBL X2D 0.4 nozzle",
+    "name": "sunlu pla+ 2.0",
+    "nozzle_temperature": [
+        "206",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "210",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "220"
+    ],
+    "nozzle_temperature_range_low": [
+        "197"
+    ],
+    "textured_plate_temp": [
+        "59"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "63"
+    ],
+    "version": "2.8.0.6"
+}

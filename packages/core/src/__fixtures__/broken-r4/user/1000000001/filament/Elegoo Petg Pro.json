@@ -1,0 +1,39 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Elegoo petg pro"
+    ],
+    "from": "User",
+    "inherits": "Generic PETG @BBL X2D 0.4 nozzle",
+    "name": "Elegoo petg pro",
+    "nozzle_temperature": [
+        "251",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "256",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "230"
+    ],
+    "textured_plate_temp": [
+        "68"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "72"
+    ],
+    "version": "2.8.0.6"
+}

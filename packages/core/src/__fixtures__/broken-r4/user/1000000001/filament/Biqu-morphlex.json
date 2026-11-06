@@ -1,0 +1,51 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_flow_ratio": [
+        "0.98",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_max_volumetric_speed": [
+        "4",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Biqu-Morphlex"
+    ],
+    "from": "User",
+    "inherits": "Generic TPU @BBL X2D 0.4 nozzle",
+    "name": "Biqu-Morphlex",
+    "nozzle_temperature": [
+        "254",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "258",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "225"
+    ],
+    "textured_plate_temp": [
+        "54"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "58"
+    ],
+    "version": "2.8.0.6"
+}

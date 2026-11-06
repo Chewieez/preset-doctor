@@ -1,0 +1,46 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_max_volumetric_speed": [
+        "19",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Elegoo Pla pro 06"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @BBL X2D 0.6 nozzle",
+    "name": "Elegoo Pla pro 06",
+    "nozzle_temperature": [
+        "203",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "206",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "210"
+    ],
+    "textured_plate_temp": [
+        "58"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "61"
+    ],
+    "version": "2.7.0.2",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}

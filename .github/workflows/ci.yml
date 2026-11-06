@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: windows-latest
+    env:
+      # Unit tests don't launch Electron, so skip the ~100 MB binary download.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Builds every workspace: core, the desktop app (out/) and the web version (apps/web/dist).
+      - run: npm run build
+      - run: npm test
+      # The built web version in the runner's Edge, on a copy of a fixture in browser storage.
+      - run: npm run web:e2e

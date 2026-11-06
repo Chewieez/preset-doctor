@@ -1,0 +1,45 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow"
+    ],
+    "filament_retraction_length": [
+        "2",
+        "nil"
+    ],
+    "filament_retraction_speed": [
+        "40",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Flash Forge abs pro 06"
+    ],
+    "from": "User",
+    "inherits": "Generic ABS @BBL X2D 0.6 nozzle",
+    "name": "Flash Forge abs pro 06",
+    "nozzle_temperature": [
+        "253",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "258",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "textured_plate_temp": [
+        "105"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "110"
+    ],
+    "version": "2.6.0.1",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}

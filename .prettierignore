@@ -1,0 +1,8 @@
+dist
+node_modules
+.tsbuild
+apps/desktop/out
+apps/desktop/release
+**/__fixtures__/**
+package-lock.json
+*.md

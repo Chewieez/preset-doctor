@@ -1,0 +1,33 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Cookie Cad Silk"
+    ],
+    "from": "User",
+    "inherits": "Bambu PLA Silk @BBL X2D 0.4 nozzle",
+    "name": "Cookie Cad Silk",
+    "nozzle_temperature": [
+        "229",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "232",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "235"
+    ],
+    "nozzle_temperature_range_low": [
+        "215"
+    ],
+    "version": "2.8.0.6"
+}

@@ -1,0 +1,31 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Generic PLA @BBL X2D 0.4 nozzle - Copy 06"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @BBL X2D 0.6 nozzle",
+    "name": "Generic PLA @BBL X2D 0.4 nozzle - Copy 06",
+    "nozzle_temperature": [
+        "225",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "225",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "version": "2.6.0.2",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}

@@ -1,0 +1,42 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_flow_ratio": [
+        "1.04",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_max_volumetric_speed": [
+        "5",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_retraction_length": [
+        "0.6",
+        "0.4",
+        "0.4",
+        "0.4"
+    ],
+    "filament_settings_id": [
+        "CookieCad TPU"
+    ],
+    "from": "User",
+    "inherits": "Generic TPU @BBL X2D 0.4 nozzle",
+    "name": "CookieCad TPU",
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "textured_plate_temp": [
+        "50"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "56"
+    ],
+    "version": "2.8.0.6"
+}

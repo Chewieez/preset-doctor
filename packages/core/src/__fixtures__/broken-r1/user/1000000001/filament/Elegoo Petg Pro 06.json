@@ -1,0 +1,43 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Elegoo petg pro 06"
+    ],
+    "from": "User",
+    "inherits": "Generic PETG @BBL X2D 0.6 nozzle",
+    "name": "Elegoo Petg Pro 06",
+    "nozzle_temperature": [
+        "251",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "256",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "230"
+    ],
+    "textured_plate_temp": [
+        "68"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "72"
+    ],
+    "version": "2.6.0.3",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}

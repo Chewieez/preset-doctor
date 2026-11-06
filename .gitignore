@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+.tsbuild/
+
+# Desktop app build output
+apps/desktop/out/
+apps/desktop/release/
+
+# Never commit raw copies of a real BambuStudio folder (account ids).
+# Fixtures go through scripts/make-fixtures.ts, which anonymizes them.
+/real/
+/live-copy/
+**/user_backup_*/
+preset-doctor-test.txt

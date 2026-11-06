@@ -1,0 +1,51 @@
+{
+    "fan_max_speed": [
+        "45"
+    ],
+    "fan_min_speed": [
+        "35"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Anycubic Petg"
+    ],
+    "first_x_layer_fan_speed": [
+        "30"
+    ],
+    "from": "User",
+    "inherits": "Generic PETG @BBL X2D 0.4 nozzle",
+    "name": "Anycubic Petg",
+    "nozzle_temperature": [
+        "244",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "249",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "250"
+    ],
+    "nozzle_temperature_range_low": [
+        "230"
+    ],
+    "slow_down_min_speed": [
+        "14",
+        "20",
+        "20",
+        "20"
+    ],
+    "textured_plate_temp": [
+        "66"
+    ],
+    "version": "2.8.0.6"
+}

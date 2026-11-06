@@ -1,0 +1,87 @@
+{
+    "eng_plate_temp": [
+        "52"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "54"
+    ],
+    "fan_cooling_layer_time": [
+        "35"
+    ],
+    "fan_max_speed": [
+        "10"
+    ],
+    "fan_min_speed": [
+        "0"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_max_volumetric_speed": [
+        "13",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Sunlu Easy PA"
+    ],
+    "from": "User",
+    "hot_plate_temp": [
+        "52"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "54"
+    ],
+    "inherits": "Generic PA @BBL X2D 0.4 nozzle",
+    "name": "Sunlu Easy PA",
+    "nozzle_temperature": [
+        "266",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "270",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "270"
+    ],
+    "nozzle_temperature_range_low": [
+        "250"
+    ],
+    "overhang_fan_speed": [
+        "20"
+    ],
+    "overhang_fan_threshold": [
+        "25%"
+    ],
+    "overhang_threshold_participating_cooling": [
+        "25%"
+    ],
+    "slow_down_for_layer_cooling": [
+        "0"
+    ],
+    "slow_down_layer_time": [
+        "14"
+    ],
+    "slow_down_min_speed": [
+        "25",
+        "10",
+        "10",
+        "10"
+    ],
+    "textured_plate_temp": [
+        "53"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "55"
+    ],
+    "version": "2.8.0.6"
+}

@@ -1,0 +1,43 @@
+{
+    "fan_max_speed": [
+        "65"
+    ],
+    "fan_min_speed": [
+        "65"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "Bambu PLA Matte @BBL X2D 0.4 nozzle - Copy 06"
+    ],
+    "from": "User",
+    "inherits": "Bambu PLA Matte @BBL X2D 0.6 nozzle",
+    "name": "Bambu PLA Matte @BBL X2D 0.4 nozzle - Copy 06",
+    "nozzle_temperature": [
+        "222",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "225",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "textured_plate_temp": [
+        "58"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "60"
+    ],
+    "version": "2.6.0.3",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}

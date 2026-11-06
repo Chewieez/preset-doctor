@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Nothing by default; each job asks for what it needs.
+permissions: {}
+
+jobs:
+  # Builds and tests with a read-only token that isn't left in .git/config, so code run by
+  # npm ci or the build can't push to the repo or touch releases.
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # The exe name and the in-app version come from package.json; a tag without a matching
+      # bump would publish v0.1.1 containing PresetDoctor-0.1.0-portable.exe.
+      - name: Check that the tag matches every package version
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          for p in . packages/core packages/ui apps/desktop apps/web; do
+            pv=$(node -p "require('./$p/package.json').version")
+            if [ "$pv" != "$v" ]; then
+              echo "::error::$p/package.json is $pv but the tag is $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # The exe is unsigned on purpose (see README); don't let electron-builder look for a cert.
+      - run: npm run desktop:dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-exe
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
+
+  # Publishes with the preinstalled gh CLI: no checkout, no npm, no third-party action.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: portable-exe
+          path: dist
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" dist/*.exe
+          --repo "$GITHUB_REPOSITORY"
+          --title "$GITHUB_REF_NAME"
+          --generate-notes
+          --verify-tag

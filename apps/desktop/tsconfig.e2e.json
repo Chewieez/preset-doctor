@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "outDir": ".tsbuild/e2e",
+    "rootDir": "e2e",
+    "lib": ["ES2023", "DOM"],
+    "types": ["node"]
+  },
+  "include": ["e2e/**/*"]
+}

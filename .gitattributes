@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.zip binary
+# Fixtures must stay byte-identical to what Bambu Studio writes (round-trip tests).
+packages/core/src/__fixtures__/** -text

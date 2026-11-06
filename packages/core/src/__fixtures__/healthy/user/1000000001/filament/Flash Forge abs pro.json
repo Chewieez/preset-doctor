@@ -1,0 +1,41 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow"
+    ],
+    "filament_retraction_length": [
+        "2",
+        "nil"
+    ],
+    "filament_retraction_speed": [
+        "40",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Flash Forge abs pro"
+    ],
+    "from": "User",
+    "inherits": "Generic ABS @BBL X2D 0.4 nozzle",
+    "name": "Flash Forge abs pro",
+    "nozzle_temperature": [
+        "253",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "258",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "260"
+    ],
+    "nozzle_temperature_range_low": [
+        "220"
+    ],
+    "textured_plate_temp": [
+        "105"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "110"
+    ],
+    "version": "2.8.0.6"
+}

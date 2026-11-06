@@ -1,0 +1,23 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "emitDeclarationOnly": true,
+    "outDir": ".tsbuild/node",
+    "rootDir": "../..",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "vite.config.ts",
+    "e2e/**/*",
+    "src/**/*.test.ts",
+    "src/testing/**/*",
+    "../../packages/core/src/testing/fsContract.ts"
+  ],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/ui" }
+  ]
+}

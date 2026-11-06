@@ -1,0 +1,36 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_settings_id": [
+        "cope"
+    ],
+    "from": "User",
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "inherits": "Bambu PLA Matte @BBL X2D 0.4 nozzle",
+    "name": "cope",
+    "nozzle_temperature_initial_layer": [
+        "224",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "220"
+    ],
+    "nozzle_temperature_range_low": [
+        "195"
+    ],
+    "textured_plate_temp": [
+        "53"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "58"
+    ],
+    "version": "2.8.0.6"
+}

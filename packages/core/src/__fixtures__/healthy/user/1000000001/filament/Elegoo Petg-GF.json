@@ -1,0 +1,52 @@
+{
+    "chamber_temperatures": [
+        "40"
+    ],
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Direct Drive E3D High Flow",
+        "Bowden Standard",
+        "Bowden High Flow",
+        "Bowden E3D High Flow"
+    ],
+    "filament_flow_ratio": [
+        "0.96",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_max_volumetric_speed": [
+        "10",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "Elegoo Petg-GF"
+    ],
+    "from": "User",
+    "inherits": "Generic PETG-CF @BBL X2D 0.4 nozzle",
+    "name": "Elegoo Petg-GF",
+    "nozzle_temperature": [
+        "262",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "265",
+        "nil",
+        "nil",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "version": "2.8.0.6"
+}

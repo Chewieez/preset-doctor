@@ -1,0 +1,55 @@
+{
+    "filament_extruder_variant": [
+        "Direct Drive Standard",
+        "Direct Drive High Flow",
+        "Bowden Standard",
+        "Bowden High Flow"
+    ],
+    "filament_flow_ratio": [
+        "1.04",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_max_volumetric_speed": [
+        "6",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "filament_settings_id": [
+        "CookieCad TPU1 06"
+    ],
+    "from": "User",
+    "inherits": "Generic TPU @BBL X2D 0.6 nozzle",
+    "name": "CookieCad TPU1 06",
+    "nozzle_temperature": [
+        "217",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_initial_layer": [
+        "220",
+        "nil",
+        "nil",
+        "nil"
+    ],
+    "nozzle_temperature_range_high": [
+        "230"
+    ],
+    "nozzle_temperature_range_low": [
+        "190"
+    ],
+    "textured_plate_temp": [
+        "50"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "57"
+    ],
+    "version": "2.7.0.7",
+    "compatible_printers": [
+        "Bambu Lab X2D 0.6 nozzle"
+    ],
+    "compatible_printers_condition": ""
+}
