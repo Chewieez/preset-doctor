@@ -2,6 +2,7 @@
  * R4 MALFORMED: files Studio can't load, presets without a name, a `name` that differs from
  * the file name, and presets without a `.info` sidecar. Only the name mismatch is fixable.
  */
+import { basename } from '../fs.js';
 import { presetName, userInherits } from '../resolve.js';
 import { RULE_IDS, type Finding, type UserPreset } from '../types.js';
 
@@ -70,9 +71,13 @@ export function checkR4(preset: UserPreset, ctx: R4Context): Finding[] {
       severity: 'info',
       status: 'info',
       title: 'Sync file (.info) could not be read',
-      explanation:
-        `${preset.infoError}. Another program may be holding it open: close OneDrive or ` +
-        'pause the antivirus scan, then scan again.',
+      explanation: preset.infoIsFolder
+        ? `There is a folder named "${basename(preset.infoPath)}" where this preset's sync file ` +
+          "should be. Studio can't use it, and scanning again won't change that: move that " +
+          'folder out of the filament folder, then scan again.'
+        : "Preset Doctor couldn't open this preset's sync file. Another program may be holding " +
+          'it open: close OneDrive or pause the antivirus scan, then scan again. ' +
+          `(Details: ${preset.infoError})`,
     });
   } else if (preset.info === undefined) {
     findings.push({

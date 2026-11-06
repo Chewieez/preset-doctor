@@ -6,6 +6,7 @@ import {
   parsePsOutput,
   parseTasklistCsv,
   processListProgram,
+  runCommand,
   type CommandRunner,
 } from './studioProcess.js';
 
@@ -152,5 +153,19 @@ describe('defaultPaths', () => {
     expect(defaultPaths({ platform: 'linux', env: {}, home: '/home/me' }).studioRoot).toBe(
       '/home/me/.config/BambuStudio',
     );
+  });
+});
+
+describe('runCommand', () => {
+  it('resolves with stdout', async () => {
+    expect(await runCommand(process.execPath, ['-e', 'process.stdout.write("hi")'])).toBe('hi');
+  });
+
+  it('kills and rejects a program that never exits, instead of hanging', async () => {
+    const started = Date.now();
+    await expect(
+      runCommand(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], 300),
+    ).rejects.toMatchObject({ killed: true });
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 });

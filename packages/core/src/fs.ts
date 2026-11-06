@@ -37,7 +37,16 @@ export function errorMessage(err: unknown): string {
 }
 
 export function isNotFound(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'ENOENT';
+  return errorCode(err) === 'ENOENT';
+}
+
+/** A read of a path that is a folder, not a file (adapters report it as code EISDIR). */
+export function isFolderError(err: unknown): boolean {
+  return errorCode(err) === 'EISDIR';
+}
+
+function errorCode(err: unknown): unknown {
+  return typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
 }
 
 /** Joins path segments with '/', dropping empty segments. */

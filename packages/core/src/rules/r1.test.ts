@@ -343,9 +343,9 @@ describe('R1 nozzle evidence', () => {
     expect(f?.explanation).toBe(
       'This preset is based on "Foo @BBL X2D", which no longer exists in Bambu Studio\'s system ' +
         "presets (version 02.08.00.06), so Studio hides it. Its name doesn't include a nozzle " +
-        'size, and on the Bambu Lab X2D presets named that way are for different nozzles, so ' +
-        "Preset Doctor can't tell which nozzle it was for. Pick the preset for the nozzle you " +
-        'print with.',
+        "size, and on the Bambu Lab X2D, a name like that doesn't say which nozzle it was for " +
+        "(it could be the 0.4, 0.6 or 0.8 mm nozzle), so Preset Doctor can't tell. Pick the " +
+        'preset for the nozzle you print with.',
     );
   });
 
@@ -356,7 +356,7 @@ describe('R1 nozzle evidence', () => {
       'medium Foo @BBL X2D 0.4 nozzle',
       'medium Foo @BBL X2D 0.6 nozzle',
     ]);
-    expect(f?.explanation).toContain("can't tell which nozzle it was for");
+    expect(f?.explanation).toContain("doesn't say which nozzle it was for");
   });
 
   it('still pre-selects a preset that covers every size the name could mean', async () => {
@@ -464,7 +464,7 @@ describe('R1 nozzle evidence', () => {
       "Your preset's sync file (.info) says it was made from this preset, which is for the 0.6 " +
         'mm nozzle. That file is not always right, so check it matches your nozzle.',
     );
-    expect(f?.explanation).toContain("can't tell which nozzle it was for");
+    expect(f?.explanation).toContain("doesn't say which nozzle it was for");
   });
 
   it('ignores a base_id that contradicts the name, or names another filament', async () => {

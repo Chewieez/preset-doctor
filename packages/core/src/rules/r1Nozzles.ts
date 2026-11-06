@@ -125,6 +125,8 @@ async function computeConvention(
  * safe to pick without asking. When every such preset of the printer is for the 0.4 nozzle alone,
  * that is the convention: 0.4. Otherwise the size is anyone's guess (a renamed preset may have
  * been for any nozzle the printer takes), so every size the printer's presets list, plus 0.4.
+ * 0.4 is added even when the printer lists no 0.4 preset: the missing name may come from an
+ * older profile, where an unsuffixed name meant the default (0.4) nozzle.
  * Null when the profile has no unsuffixed preset for the printer to learn from.
  */
 export function possibleUnsuffixedNozzles(c: UnsuffixedConvention | null): string[] | null {

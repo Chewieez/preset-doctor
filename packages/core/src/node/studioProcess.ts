@@ -35,13 +35,33 @@ export function processListProgram(
   return fileExists('/bin/ps') ? '/bin/ps' : '/usr/bin/ps';
 }
 
-const defaultRunner: CommandRunner = (file, args) =>
-  new Promise((resolve, reject) => {
-    execFile(file, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout);
-    });
+/** How long the process list may take; tasklist can hang on a stalled WMI. */
+export const PROCESS_LIST_TIMEOUT_MS = 10_000;
+
+/**
+ * Runs a program and resolves with its stdout, killing it and rejecting after `timeoutMs`. The
+ * timeout matters: the desktop app polls Studio's state one check at a time, and apply/restore
+ * check it inside the write queue, so a check that never settles would freeze both.
+ */
+export function runCommand(
+  file: string,
+  args: string[],
+  timeoutMs = PROCESS_LIST_TIMEOUT_MS,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout);
+      },
+    );
   });
+}
+
+const defaultRunner: CommandRunner = (file, args) => runCommand(file, args);
 
 /**
  * True when Bambu Studio is running. Throws if the process list cannot be read, so callers can

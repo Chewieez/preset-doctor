@@ -99,7 +99,20 @@ describe('R4 malformed presets', () => {
     };
     const findings = await r4(fs);
     expect(brief(findings)).toEqual(['Locked: info/info Sync file (.info) could not be read']);
-    expect(findings[0]?.explanation).toContain('Could not read the sync file: busy.');
+    expect(findings[0]?.explanation).toContain('close OneDrive or pause the antivirus scan');
+    expect(findings[0]?.explanation).toMatch(/\(Details: busy\)$/);
+  });
+
+  it('says to move a folder named like the sidecar, instead of suggesting a rescan', async () => {
+    const fs = fakeStudio(SYSTEM, [{ name: 'Boxed', inherits: 'Generic PLA @BBL X2D' }]);
+    await fs.mkdir('user/1000000001/filament/Boxed.info');
+    const findings = await r4(fs);
+    expect(brief(findings)).toEqual(['Boxed: info/info Sync file (.info) could not be read']);
+    const text = findings[0]!.explanation;
+    expect(text).toContain('There is a folder named "Boxed.info"');
+    expect(text).toContain('move that folder');
+    expect(text).not.toContain('OneDrive');
+    expect(text).not.toContain('Is a folder');
   });
 
   it('notes a missing sidecar at info level', async () => {

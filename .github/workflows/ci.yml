@@ -18,6 +18,8 @@ concurrency:
 jobs:
   check:
     runs-on: windows-latest
+    # web:e2e drives Edge; don't let a hang run to the 6-hour default.
+    timeout-minutes: 20
     env:
       # Unit tests don't launch Electron, so skip the ~100 MB binary download.
       ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
@@ -42,6 +44,8 @@ jobs:
   desktop-e2e:
     # Launches the built desktop app (so this job needs the Electron binary) on a temp fixture copy.
     runs-on: windows-latest
+    # Launches Electron; don't let a window that never exits run to the 6-hour default.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:

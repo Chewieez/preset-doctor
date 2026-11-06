@@ -1,11 +1,17 @@
 version: 2
 updates:
-  # Keeps the workflows off deprecated action majors (e.g. the Node 20 ones).
+  # Keeps the workflows off deprecated action majors (e.g. the Node 20 ones). Minor and patch
+  # bumps come grouped; a new major comes as its own pull request.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-  # One grouped pull request for npm updates, so CI checks them together.
+    groups:
+      github-actions:
+        patterns: ['*']
+        update-types: [minor, patch]
+  # One grouped pull request for npm minor and patch updates, so CI checks them together. Majors
+  # come as separate pull requests, so one that can't land yet doesn't hold back the rest.
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -13,3 +19,9 @@ updates:
     groups:
       npm:
         patterns: ['*']
+        update-types: [minor, patch]
+    ignore:
+      # typescript-eslint caps its TypeScript peer (currently below 6.1), so a TypeScript major or
+      # minor can fail npm ci until it catches up. Bump TypeScript by hand with typescript-eslint.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']

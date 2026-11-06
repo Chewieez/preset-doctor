@@ -29,9 +29,12 @@ export function memFs(initial: Record<string, string | Uint8Array> = {}): MemFs 
     files.set(p, data.slice());
   };
   const get = (path: string): Uint8Array => {
-    const data = files.get(normalizePath(path));
-    if (!data) throw new FsNotFoundError(path);
-    return data;
+    const p = normalizePath(path);
+    const data = files.get(p);
+    if (data) return data;
+    // Like Node's EISDIR, so isFolderError works the same on every adapter.
+    if (dirs.has(p)) throw Object.assign(new Error(`Is a folder: ${p}`), { code: 'EISDIR' });
+    throw new FsNotFoundError(path);
   };
 
   for (const [p, v] of Object.entries(initial)) put(p, typeof v === 'string' ? encodeText(v) : v);

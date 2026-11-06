@@ -1,6 +1,7 @@
 import {
   errorMessage,
   InvalidUtf8Error,
+  isFolderError,
   isNotFound,
   joinPath,
   readTextStrict,
@@ -117,7 +118,8 @@ async function readPreset(fs: PresetFs, accountId: string, f: PresetFile): Promi
     }
   } catch (err) {
     // Locked by OneDrive or an antivirus, or a folder named *.info: say so, don't fail the scan.
-    preset.infoError = `Could not read the sync file: ${errorMessage(err)}`;
+    preset.infoError = errorMessage(err);
+    if (isFolderError(err)) preset.infoIsFolder = true;
   }
   return preset;
 }

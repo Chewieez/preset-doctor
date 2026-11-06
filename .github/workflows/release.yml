@@ -9,26 +9,18 @@ on:
 permissions: {}
 
 jobs:
-  # Everything CI checks (lint, format, typecheck, tests, both e2e suites), so a tag on a commit
-  # that fails CI never becomes a release.
-  checks:
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
-  # Builds and tests with a read-only token that isn't left in .git/config, so code run by
-  # npm ci or the build can't push to the repo or touch releases.
-  build:
-    needs: checks
-    runs-on: windows-latest
+  # The exe name and the in-app version come from package.json; a tag without a matching bump
+  # would publish v0.1.1 containing PresetDoctor-0.1.0-portable.exe. Runs first and needs no
+  # npm ci, so a mistagged release fails in seconds instead of after the full CI suite.
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # The exe name and the in-app version come from package.json; a tag without a matching
-      # bump would publish v0.1.1 containing PresetDoctor-0.1.0-portable.exe.
       - name: Check that the tag matches every package version
         shell: bash
         run: |
@@ -40,13 +32,34 @@ jobs:
               exit 1
             fi
           done
+
+  # Everything CI checks (lint, format, typecheck, build, tests, both e2e suites), so a tag on a
+  # commit that fails CI never becomes a release.
+  checks:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  # Packages the exe and smoke-tests it, with a read-only token that isn't left in .git/config,
+  # so code run by npm ci or the build can't push to the repo or touch releases. The build and
+  # the tests already ran in checks; desktop:dist does its own electron-vite build.
+  build:
+    needs: [version, checks]
+    runs-on: windows-latest
+    # Launches Electron; don't let a window that never exits run to the 6-hour default.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: npm run build
-      - run: npm test
       # The exe is unsigned on purpose (see README); don't let electron-builder look for a cert.
       - run: npm run desktop:dist
         env:
@@ -68,6 +81,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       id-token: write

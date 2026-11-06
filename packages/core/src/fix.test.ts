@@ -163,6 +163,76 @@ describe('planFixes', () => {
     expect(Array.from(await fs.readBytes(path))).toEqual(Array.from(bytes));
   });
 
+  it('still plans every repair when a sidecar is a folder or locked, leaving that base_id alone', async () => {
+    const fs = fakeStudio(
+      [
+        {
+          name: 'Generic PLA @BBL X2D',
+          setting_id: 'GFSL99_20',
+          compatible_printers: ['Bambu Lab X2D 0.6 nozzle'],
+        },
+      ],
+      [
+        { name: 'Boxed', inherits: 'Generic PLA @BBL X2D 0.6 nozzle' },
+        { name: 'Locked', inherits: 'Generic PLA @BBL X2D 0.6 nozzle', info: sidecar('OLD') },
+        { name: 'Fine', inherits: 'Generic PLA @BBL X2D 0.6 nozzle', info: sidecar('OLD') },
+      ],
+    );
+    const dir = 'user/1000000001/filament';
+    await fs.mkdir(`${dir}/Boxed.info`);
+    const readBytes = fs.readBytes.bind(fs);
+    const readText = fs.readText.bind(fs);
+    const busy = (): never => {
+      throw Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' });
+    };
+    fs.readBytes = async (p) => (p === `${dir}/Locked.info` ? busy() : readBytes(p));
+    fs.readText = async (p) => (p === `${dir}/Locked.info` ? busy() : readText(p));
+
+    const r = await scan(fs);
+    expect(defaultChoices(r)).toHaveLength(3);
+    const changes = await planFixes(fs, r, defaultChoices(r));
+    expect(changes.map((c) => c.path)).toEqual([
+      `${dir}/Boxed.json`,
+      `${dir}/Fine.json`,
+      `${dir}/Fine.info`,
+      `${dir}/Locked.json`,
+    ]);
+    const describe = (name: string): string =>
+      changes.find((c) => c.path === `${dir}/${name}.json`)!.description;
+    expect(describe('Boxed')).toBe(
+      'Set its parent to "Generic PLA @BBL X2D" (was "Generic PLA @BBL X2D 0.6 nozzle"). ' +
+        'Its sync file (.info) is a folder, not a file, so its base_id is left as it is.',
+    );
+    expect(describe('Locked')).toContain(
+      "Its sync file (.info) couldn't be read (EBUSY: resource busy or locked), so its base_id",
+    );
+    expect(describe('Fine')).not.toContain('sync file');
+  });
+
+  it('leaves a sidecar that is not valid UTF-8 untouched but still re-parents the preset', async () => {
+    const fs = fakeStudio(
+      [
+        {
+          name: 'Generic PLA @BBL X2D',
+          setting_id: 'GFSL99_20',
+          compatible_printers: ['Bambu Lab X2D 0.6 nozzle'],
+        },
+      ],
+      [{ name: 'Garbled', inherits: 'Generic PLA @BBL X2D 0.6 nozzle', info: sidecar('OLD') }],
+    );
+    const infoPath = 'user/1000000001/filament/Garbled.info';
+    const bytes = Uint8Array.from([...new TextEncoder().encode('base_id = OLD\n'), 0xff, 0x0a]);
+    await fs.writeBytes(infoPath, bytes);
+
+    const r = await scan(fs);
+    const changes = await planFixes(fs, r, defaultChoices(r));
+    expect(changes.map((c) => c.path)).toEqual(['user/1000000001/filament/Garbled.json']);
+    expect(changes[0]?.description).toContain(
+      'Its sync file (.info) is not valid UTF-8 text, so its base_id is left as it is.',
+    );
+    expect(Array.from(await fs.readBytes(infoPath))).toEqual(Array.from(bytes));
+  });
+
   it('accepts any listed candidate, and combines edits to one file', async () => {
     const fs = fakeStudio(
       [

@@ -1,6 +1,6 @@
 // Shared behaviour every PresetFs adapter must have. Test-only (excluded from the build).
 import { describe, expect, it } from 'vitest';
-import { isNotFound, type PresetFs } from '../fs.js';
+import { isFolderError, isNotFound, type PresetFs } from '../fs.js';
 
 export function describePresetFsContract(
   name: string,
@@ -24,6 +24,12 @@ export function describePresetFsContract(
       const fs = await make({});
       await expect(fs.readText('missing.json')).rejects.toSatisfy(isNotFound);
       await expect(fs.list('nope')).rejects.toSatisfy(isNotFound);
+    });
+
+    it('throws a folder error with code EISDIR when reading a folder', async () => {
+      const fs = await make({ 'd/f.txt': '' });
+      await expect(fs.readText('d')).rejects.toSatisfy(isFolderError);
+      await expect(fs.readBytes('d')).rejects.toSatisfy(isFolderError);
     });
 
     it('writes, overwrites and creates parent folders', async () => {

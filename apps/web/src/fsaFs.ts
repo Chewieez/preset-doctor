@@ -59,6 +59,13 @@ export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {
       const file = await (await dir.getFileHandle(name)).getFile();
       return new Uint8Array(await file.arrayBuffer());
     } catch (err) {
+      // The parent folder exists, so a type mismatch here means `name` is a folder; say so the
+      // way Node does (core's isFolderError), e.g. for a folder named *.info.
+      if ((err as { name?: unknown } | null)?.name === 'TypeMismatchError') {
+        throw Object.assign(new Error(`"${path}" is a folder, not a file`, { cause: err }), {
+          code: 'EISDIR',
+        });
+      }
       throw mapError(err, path);
     }
   };

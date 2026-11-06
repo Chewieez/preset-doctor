@@ -74,8 +74,10 @@ export interface UserPreset {
   infoPath: string;
   info?: InfoFile;
   infoRaw?: string;
-  /** Why an existing .info sidecar could not be read (locked, a folder, ...). */
+  /** Why an existing .info sidecar could not be read: the adapter's error message. */
   infoError?: string;
+  /** With infoError: the sidecar path is a folder, so scanning again won't help. */
+  infoIsFolder?: boolean;
 }
 
 /** One row of the results table. Every preset gets one, including healthy ones. */

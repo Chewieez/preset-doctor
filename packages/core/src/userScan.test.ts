@@ -134,10 +134,12 @@ describe('scanUser edge cases', () => {
     const [a, b] = await scanUser(fs, '1');
     expect(a!.json).toEqual({ name: 'A' });
     expect(a!.info).toBeUndefined();
-    expect(a!.infoError).toBe('Could not read the sync file: busy');
+    expect(a!.infoError).toBe('busy');
+    expect(a!.infoIsFolder).toBeUndefined();
     expect(b!.json).toEqual({ name: 'B' });
     expect(b!.info).toBeUndefined();
-    expect(b!.infoError).toBe('Could not read the sync file: is a directory');
+    expect(b!.infoError).toBe('is a directory');
+    expect(b!.infoIsFolder).toBe(true);
   });
 
   it('flags JSON that is not an object', async () => {

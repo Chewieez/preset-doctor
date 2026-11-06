@@ -50,7 +50,7 @@ export function registerIpc(
   };
 
   for (const [name, handler] of Object.entries(handlers) as [keyof typeof CHANNELS, Handler][]) {
-    ipcMain.handle(CHANNELS[name], (event, ...args) => {
+    ipcMain.handle(CHANNELS[name], async (event, ...args): Promise<IpcResult<unknown>> => {
       const win = getWindow();
       if (
         !win ||
@@ -60,11 +60,13 @@ export function registerIpc(
         return { ok: false, error: { code: 'invalid', message: 'Request from an unknown page.' } };
       }
       // An IpcResult, never a rejection: the UI relies on that (e.g. shell.openExternal or
-      // mkdir throwing would otherwise surface as an unhandled rejection in the window).
-      return handler(event, ...args).catch((err: unknown): IpcResult<unknown> => ({
-        ok: false,
-        error: { code: 'failed', message: errorMessage(err) },
-      }));
+      // mkdir throwing would otherwise surface as an unhandled rejection in the window). The
+      // await inside try also catches a handler that throws before returning its promise.
+      try {
+        return await handler(event, ...args);
+      } catch (err) {
+        return { ok: false, error: { code: 'failed', message: errorMessage(err) } };
+      }
     });
   }
 }

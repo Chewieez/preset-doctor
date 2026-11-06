@@ -17,14 +17,16 @@
  * The target sizes (see describeTarget), strongest evidence first:
  *   name     the missing name's own suffix ("... 0.6 nozzle").
  *   compat   the orphan's own compatible_printers for that printer (all must be covered).
- *   family   neither: every size the profile uses unsuffixed names for on that printer, plus
- *            0.4. Only a candidate covering all of them is safe; usually none is, so the user
- *            is asked to pick the nozzle.
+ *   family   neither: if every unsuffixed preset for that printer is 0.4-only, 0.4; otherwise
+ *            every size any preset for that printer lists (suffixed or not), plus 0.4. Only a
+ *            candidate covering all of them is safe; usually none is, so the user is asked to
+ *            pick the nozzle.
  *   default  the profile has no unsuffixed preset for that printer to learn from: 0.4.
  * The `.info` base_id is never enough on its own: in real sidecars it often names another
  * nozzle or printer than the preset's own, existing parent (about a third on the machine this was
  * built on; `node scripts/r1-simulate.ts` prints the count), so it only breaks ties between
- * high candidates and puts the preset it names first among medium ones.
+ * high candidates and, when the target size is a guess (family/default), puts the preset it
+ * names first among medium ones.
  */
 import { getInfoValue, INFO_KEYS } from '../infoFile.js';
 import {
@@ -471,9 +473,10 @@ function explain(target: Target, ranked: Ranked[], version: string | null): stri
   }
   if (nozzleUnsure(target) && ranked.some((r) => r.candidate.confidence === 'medium')) {
     return (
-      `${intro} Its name doesn't include a nozzle size, and on the ${target.model ?? 'printer'} ` +
-      `presets named that way are for different nozzles, so Preset Doctor can't tell which ` +
-      `nozzle it was for. Pick the preset for the nozzle you print with.`
+      `${intro} Its name doesn't include a nozzle size, and on the ${target.model ?? 'printer'}, ` +
+      `a name like that doesn't say which nozzle it was for (it could be the ` +
+      `${joinList(target.nozzles)} mm nozzle), so Preset Doctor can't tell. Pick the preset ` +
+      `for the nozzle you print with.`
     );
   }
   if (ranked.length > 0) {

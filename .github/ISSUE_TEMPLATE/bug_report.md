@@ -31,7 +31,7 @@ it changes nothing). Preset Doctor is not published on npm, so don't use `npx`:
 
 ```
 npm run build -w @preset-doctor/core
-npm run cli -- scan --json
+npm run -s cli -- scan --json
 ```
 
 > **Before pasting or attaching anything, remove your account id.** That's the long number in

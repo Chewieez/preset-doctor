@@ -17,6 +17,7 @@ import {
   encodeText,
   errorMessage,
   InvalidUtf8Error,
+  isFolderError,
   isNotFound,
   readTextStrict,
   type PresetFs,
@@ -132,45 +133,62 @@ export async function planFixes(
 
     // The edits are byte splices; make sure the result is still valid JSON before offering it.
     if (!tryParseJsonFile(after).ok) throw new FixError(`Fixing ${summary.path} would break it.`);
-    if (after !== before) {
-      changes.push({
-        path: summary.path,
-        before,
-        after,
-        description: `${capitalize(joinNotes(notes))}.`,
-      });
-    }
 
-    if (newParent && updateBaseId) {
-      const info = await baseIdChange(fs, summary.path, newParent);
-      if (info) changes.push(info);
+    const info = newParent && updateBaseId ? await baseIdChange(fs, summary.path, newParent) : null;
+    if (after !== before) {
+      let description = `${capitalize(joinNotes(notes))}.`;
+      if (info?.skipped !== undefined) description += ` ${info.skipped}`;
+      changes.push({ path: summary.path, before, after, description });
     }
+    if (info?.change) changes.push(info.change);
   }
   return changes;
 }
 
+/** The base_id edit for one preset, or why its sidecar was left alone. */
+interface BaseIdResult {
+  change?: Change;
+  /** A sentence for the preset's own change: its sidecar exists but could not be read. */
+  skipped?: string;
+}
+
+/**
+ * base_id is optional (see PlanOptions), so a sidecar that can't be read or edited safely (locked or
+ * a folder of that name, which R4 reports; or not valid UTF-8, which only the change description
+ * mentions) is left alone instead of failing the whole plan, which would block every other repair
+ * too. The inherits edit still goes ahead.
+ */
 async function baseIdChange(
   fs: PresetFs,
   presetPath: string,
   parent: Candidate,
-): Promise<Change | null> {
+): Promise<BaseIdResult | null> {
   if (parent.settingId === undefined || parent.source === 'user') return null;
   const infoPath = infoPathFor(presetPath);
   let before: string;
   try {
-    before = await readExact(fs, infoPath);
+    // Strict for the same reason as readExact: the edit must change only the base_id line.
+    before = await readTextStrict(fs, infoPath);
   } catch (err) {
     if (isNotFound(err)) return null;
-    throw err;
+    const why =
+      err instanceof InvalidUtf8Error
+        ? 'is not valid UTF-8 text'
+        : isFolderError(err)
+          ? 'is a folder, not a file'
+          : `couldn't be read (${errorMessage(err)})`;
+    return { skipped: `Its sync file (.info) ${why}, so its base_id is left as it is.` };
   }
   const info = parseInfoFile(before);
   const current = getInfoValue(info, INFO_KEYS.baseId);
   if (current === undefined || current === parent.settingId) return null;
   return {
-    path: infoPath,
-    before,
-    after: serializeInfoFile(setInfoValue(info, INFO_KEYS.baseId, parent.settingId)),
-    description: `Point the sync file's base_id at the new parent (${current || 'empty'} -> ${parent.settingId}).`,
+    change: {
+      path: infoPath,
+      before,
+      after: serializeInfoFile(setInfoValue(info, INFO_KEYS.baseId, parent.settingId)),
+      description: `Point the sync file's base_id at the new parent (${current || 'empty'} -> ${parent.settingId}).`,
+    },
   };
 }
 
