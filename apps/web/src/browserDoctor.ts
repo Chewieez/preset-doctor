@@ -8,12 +8,15 @@
  * - It can't see processes, so studioStatus() is always 'unknown' and the UI asks the user to
  *   confirm that Studio is closed before Fix or Restore.
  * - Backups go into a preset-doctor-backups folder inside the picked folder, and can be downloaded.
+ *   Every repair makes its own backup, since the copy may be refreshed between repairs.
  */
 import {
   applyChanges,
   ApplyError,
-  BackupSession,
+  assertBackupCovers,
+  BackupCoverageError,
   BackupSourceError,
+  createBackup,
   defaultChoices,
   FixError,
   isBackupId,
@@ -21,6 +24,7 @@ import {
   listBackups,
   planFixes,
   restoreBackup,
+  RestoreError,
   scan,
   ScanError,
   StaleChangeError,
@@ -85,7 +89,6 @@ export class BrowserDoctor implements PresetDoctorApi {
   private loaded: Promise<void> | null = null;
   private lastScan: { folder: Dir; result: ScanResult } | null = null;
   private readonly plans = new Map<string, { folder: Dir; changes: Change[] }>();
-  private readonly sessions: { folder: Dir; session: BackupSession }[] = [];
   /** Writes (apply, restore) run one at a time. */
   private writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -121,6 +124,8 @@ export class BrowserDoctor implements PresetDoctorApi {
       const fs = fsaFs(folder, { readOnly: true });
       let result: ScanResult;
       try {
+        // Not swallowed like exists(): a folder deleted since it was picked is "not found".
+        await fs.list('');
         await checkCopy(fs, folder.name);
         result = await scan(fs, userId ? { root: folder.name, userId } : { root: folder.name });
       } catch (err) {
@@ -175,18 +180,26 @@ export class BrowserDoctor implements PresetDoctorApi {
       if (plan.changes.length === 0) throw invalid('There is nothing to repair in this selection.');
       await this.requireWriteAccess(plan.folder);
 
-      const session = await this.sessionFor(plan.folder);
-      const backupIsNew = session.backup === null;
-      const backup = await session.ensureBackupOnce();
+      // Every repair gets its own backup (unlike the desktop app, which makes one per session):
+      // between repairs the user copies files back, opens Studio, and may copy a fresh `user`
+      // folder into the copy, which an earlier backup wouldn't match.
+      const now = this.deps.now?.();
+      const backup = await createBackup(fsaFs(plan.folder), backupsFs(plan.folder, false), {
+        reason: 'before-fix',
+        sourceRoot: plan.folder.name,
+        ...(now ? { now } : {}),
+      });
       // Whatever happens next, the files no longer match any other preview.
       this.plans.clear();
       try {
+        assertBackupCovers(
+          backup,
+          plan.changes.map((c) => c.path),
+        );
         const { written } = await applyChanges(fsaFs(plan.folder), plan.changes);
-        // The user now copies the files back and opens Studio, and may copy a fresh `user`
-        // folder in before the next repair, so that one gets its own backup.
-        this.dropSession(plan.folder);
-        return { written, backup, backupIsNew };
+        return { written, backup, backupIsNew: true };
       } catch (err) {
+        if (err instanceof BackupCoverageError) throw new Refusal('failed', err.message);
         if (err instanceof StaleChangeError) {
           throw new Refusal(
             'stale',
@@ -229,9 +242,9 @@ export class BrowserDoctor implements PresetDoctorApi {
         });
       } catch (err) {
         if (err instanceof BackupSourceError) throw new Refusal('other-source', err.message);
+        if (err instanceof RestoreError) throw restoreRefusal(err);
         throw err;
       }
-      this.dropSession(folder);
       return { ...result, backupId };
     });
   }
@@ -340,26 +353,6 @@ export class BrowserDoctor implements PresetDoctorApi {
     }
   }
 
-  /** One backup session per folder, kept across scans, like the desktop app. */
-  private async sessionFor(folder: Dir): Promise<BackupSession> {
-    for (const s of this.sessions) {
-      if (s.folder === folder || (await sameEntry(s.folder, folder))) return s.session;
-    }
-    const now = this.deps.now;
-    const session = new BackupSession(fsaFs(folder), backupsFs(folder, false), {
-      reason: 'before-fix',
-      sourceRoot: folder.name,
-      ...(now ? { now: now() } : {}),
-    });
-    this.sessions.push({ folder, session });
-    return session;
-  }
-
-  private dropSession(folder: Dir): void {
-    const i = this.sessions.findIndex((s) => s.folder === folder);
-    if (i >= 0) this.sessions.splice(i, 1);
-  }
-
   private serialized<T>(fn: () => Promise<T>): Promise<IpcResult<T>> {
     const next = this.writeQueue.then(() => run(fn));
     this.writeQueue = next;
@@ -369,14 +362,6 @@ export class BrowserDoctor implements PresetDoctorApi {
 
 function backupsFs(folder: Dir, readOnly: boolean): PresetFs {
   return scopedFs(fsaFs(folder, { readOnly }), BACKUPS_DIR);
-}
-
-async function sameEntry(a: Dir, b: Dir): Promise<boolean> {
-  try {
-    return await a.isSameEntry(b);
-  } catch {
-    return false;
-  }
 }
 
 async function looksLikeStudio(folder: Dir): Promise<boolean> {
@@ -432,6 +417,19 @@ async function checkCopy(fs: PresetFs, name: string): Promise<void> {
       "too, then click Scan again. That's where your own presets are.";
   }
   throw new ScanError(message);
+}
+
+/** A restore that stopped part-way: say which backup undoes the part that was done. */
+function restoreRefusal(err: RestoreError): Refusal {
+  return new Refusal(
+    'partial',
+    err.message +
+      (err.safetyBackup ? '' : ' Restore the same backup again once the problem is fixed.'),
+    {
+      written: err.restored,
+      ...(err.safetyBackup ? { backupId: err.safetyBackup.id } : {}),
+    },
+  );
 }
 
 function invalid(message: string): Refusal {

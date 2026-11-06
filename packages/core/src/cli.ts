@@ -6,7 +6,15 @@
 import { realpathSync } from 'node:fs';
 import * as nodePath from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BackupSourceError, createBackup, listBackups, restoreBackup } from './backup.js';
+import {
+  assertBackupCovers,
+  BackupCoverageError,
+  BackupSourceError,
+  createBackup,
+  listBackups,
+  restoreBackup,
+  RestoreError,
+} from './backup.js';
 import {
   applyChanges,
   ApplyError,
@@ -216,7 +224,7 @@ async function scanCommand(
 ): Promise<number> {
   const result = await runScan(rootArg(rest, d), args);
   if (args.json) out(JSON.stringify(result, null, 2));
-  else printScan(result, out);
+  else printScan(result, args, out);
   // Without the system index no parent was checked: a clean exit would claim nothing is hidden.
   if (!result.systemIndexRead && result.presets.some((p) => p.inherits)) {
     if (!args.json) {
@@ -239,7 +247,7 @@ const GROUPS: { status: PresetStatus; label: string }[] = [
   { status: 'ok', label: 'OK' },
 ];
 
-function printScan(r: ScanResult, out: (l?: string) => void): void {
+function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
   printHeader(r, out);
   const byPath = new Map<string, Finding[]>();
   for (const f of r.findings) {
@@ -271,7 +279,7 @@ function printScan(r: ScanResult, out: (l?: string) => void): void {
       `${count('info')} OK with notes, ${count('ok')} OK.`,
   );
   if (r.findings.some((f) => f.proposedFix)) {
-    out(`To preview repairs: preset-doctor fix ${quote(r.root)} --dry-run`);
+    out(`To preview repairs: ${fixHint(r.root, args, r, '--dry-run')}`);
   }
 }
 
@@ -351,7 +359,7 @@ async function fixCommand(
       out();
       out('Dry run: nothing was written.');
       out(
-        `To make these repairs, close Bambu Studio and run: preset-doctor fix ${quote(root)} --apply --yes`,
+        `To make these repairs, close Bambu Studio and run: ${fixHint(root, args, result, '--apply --yes')}`,
       );
     }
     return EXIT.ok;
@@ -369,6 +377,16 @@ async function fixCommand(
   });
   out();
   out(`Backed up ${backup.fileCount} files to ${backupsDir} (backup ${backup.id}).`);
+  try {
+    assertBackupCovers(
+      backup,
+      changes.map((c) => c.path),
+    );
+  } catch (e) {
+    if (!(e instanceof BackupCoverageError)) throw e;
+    err(e.message);
+    return EXIT.failed;
+  }
 
   try {
     const applied = await applyChanges(writeFs, changes);
@@ -377,12 +395,16 @@ async function fixCommand(
     if (e instanceof ApplyError) {
       err(`${e.message}`);
       err(`Already changed: ${e.written.join(', ') || 'nothing'}.`);
-      err(`To undo: preset-doctor backups restore ${backup.id} ${quote(root)} --yes`);
+      err(
+        `To undo: preset-doctor backups restore ${backup.id} ${quote(root)}${backupsFlag(args)} --yes`,
+      );
       return EXIT.failed;
     }
     throw e;
   }
-  out(`To undo: preset-doctor backups restore ${backup.id} ${quote(root)} --yes`);
+  out(
+    `To undo: preset-doctor backups restore ${backup.id} ${quote(root)}${backupsFlag(args)} --yes`,
+  );
   out('Next: open Bambu Studio and check that the presets are back.');
   if (result.findings.some((f) => f.ruleId === R5_ID)) {
     out('Cloud preset sync is on: if a repair comes undone, turn sync off and repair again.');
@@ -452,10 +474,19 @@ async function backupsCommand(
         allowOtherSource: args.fromOtherFolder,
       });
     } catch (e) {
+      if (e instanceof RestoreError) {
+        err(e.message);
+        if (e.safetyBackup) {
+          err(
+            `To go back to how it was before this restore: preset-doctor backups restore ${e.safetyBackup.id} ${quote(root)}${backupsFlag(args)} --yes`,
+          );
+        }
+        return EXIT.failed;
+      }
       if (!(e instanceof BackupSourceError)) throw e;
       err(e.message);
       err(
-        `To restore it into ${e.sourceRoot}: preset-doctor backups restore ${id} ${quote(e.sourceRoot)} --yes`,
+        `To restore it into ${e.sourceRoot}: preset-doctor backups restore ${id} ${quote(e.sourceRoot)}${backupsFlag(args)} --yes`,
       );
       err('To put it into this folder anyway, add --from-other-folder.');
       return EXIT.refused;
@@ -468,6 +499,25 @@ async function backupsCommand(
   }
 
   throw new UsageError(`Unknown backups command "${sub}".`);
+}
+
+/**
+ * The `fix` command to run next, with the same account, base_id and backups options as this
+ * run: without --user, scan would pick the account with the most presets, which may not be the
+ * one just previewed.
+ */
+function fixHint(root: string, args: Args, result: ScanResult, mode: string): string {
+  const user =
+    args.user !== undefined || result.accounts.length > 1 ? ` --user ${quote(result.userId)}` : '';
+  return (
+    `preset-doctor fix ${quote(root)}${user} ${mode}` +
+    (args.noBaseId ? ' --no-base-id' : '') +
+    backupsFlag(args)
+  );
+}
+
+function backupsFlag(args: Args): string {
+  return args.backups !== undefined ? ` --backups ${quote(args.backups)}` : '';
 }
 
 function quote(path: string): string {

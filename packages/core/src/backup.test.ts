@@ -4,9 +4,12 @@ import { join, relative } from 'node:path';
 import { unzipSync, zipSync } from 'fflate';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
+  assertBackupCovers,
+  BackupCoverageError,
   BackupSession,
   BackupSourceError,
   MANIFEST_NAME,
+  RestoreError,
   createBackup,
   formatBackupTimestamp,
   isBackupId,
@@ -207,6 +210,47 @@ describe('listBackups', () => {
   });
 });
 
+describe('assertBackupCovers', () => {
+  it('passes for files in the backup and names the ones it lacks', async () => {
+    const src = memFs(studio());
+    // A listing that misses a folder (like a link the adapter can't see) while reads still work.
+    const blind: PresetFs = {
+      ...src,
+      list: async (dir) =>
+        (await src.list(dir)).filter((e) => !(dir === 'user/1000000001' && e.name === 'filament')),
+    };
+    const b = await createBackup(blind, memFs(), { now: T1 });
+    assertBackupCovers(b, ['user/1000000001/thumb.bin']);
+    const err = (() => {
+      try {
+        assertBackupCovers(b, ['user/1000000001/thumb.bin', 'user/1000000001/filament/A.json']);
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(BackupCoverageError);
+    expect((err as BackupCoverageError).missing).toEqual(['user/1000000001/filament/A.json']);
+    expect((err as BackupCoverageError).message).toMatch(/nothing was written/);
+  });
+
+  it('refuses a backup it did not see being made', () => {
+    expect(() =>
+      assertBackupCovers({ id: 'x', path: 'x.zip', fileCount: 1, bytes: 1 }, ['user/1/a.json']),
+    ).toThrow(BackupCoverageError);
+  });
+
+  it('refuses to back up a folder that loops back on itself', async () => {
+    const src = memFs(studio());
+    // Every folder seems to contain itself again, as a junction to a parent would.
+    const loop: PresetFs = {
+      ...src,
+      list: async (dir) =>
+        dir.split('/').length > 2 ? [{ name: 'again', kind: 'dir' }] : src.list(dir),
+    };
+    await expect(createBackup(loop, memFs(), { now: T1 })).rejects.toThrow(/nested too deeply/);
+  });
+});
+
 describe('restoreBackup', () => {
   it('backup -> modify -> restore gives byte-identical files (memFs)', async () => {
     const src = memFs(studio());
@@ -221,7 +265,8 @@ describe('restoreBackup', () => {
     const modified = await tree(src, 'user');
 
     const result = await restoreBackup(src, dest, backup.id, { now: T2 });
-    expect(result.restoredCount).toBe(6);
+    // A.json, A.info and thumb.bin; the other files already matched and were not rewritten.
+    expect(result.restoredCount).toBe(3);
 
     const after = await tree(src, 'user');
     const { ['user/1000000001/filament/New.json']: extra, ...rest } = after;
@@ -277,8 +322,38 @@ describe('restoreBackup', () => {
       expectedRoot: 'C:\\AppData\\BambuStudio',
       allowOtherSource: true,
     });
-    expect(r.restoredCount).toBe(6);
+    expect(r.restoredCount).toBe(1);
     expect(r.safetyBackup?.sourceRoot).toBe('C:\\AppData\\BambuStudio');
+  });
+
+  it('stops part-way with a RestoreError that names the safety backup', async () => {
+    const src = memFs(studio());
+    const dest = memFs();
+    const b = await createBackup(src, dest, { now: T1 });
+    await src.writeText('user/1000000001/filament/A.json', '{"name":"changed A"}');
+    await src.writeText('user/1000000001/filament/Crlf.json', '{"name":"changed Crlf"}');
+    // The second file to restore can't be written (locked, read-only, permission revoked).
+    const locked = 'user/1000000001/filament/Crlf.json';
+    const failing: PresetFs = {
+      ...src,
+      writeBytes: async (path, data) => {
+        if (path === locked) throw new Error('EPERM: operation not permitted');
+        await src.writeBytes(path, data);
+      },
+    };
+
+    const err = await restoreBackup(failing, dest, b.id, { now: T2 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RestoreError);
+    const re = err as RestoreError;
+    expect(re.failedPath).toBe(locked);
+    expect(re.restored).toEqual(['user/1000000001/filament/A.json']);
+    expect(re.safetyBackup?.id).toBe('2026-11-05T18-00-05');
+    expect(re.message).toMatch(/stopped part-way at .*Crlf.json.*EPERM/);
+    expect(re.message).toContain('restore backup 2026-11-05T18-00-05');
+    // The safety backup really holds the state from before the restore.
+    await restoreBackup(src, dest, re.safetyBackup!.id);
+    expect(await src.readText(locked)).toBe('{"name":"changed Crlf"}');
+    expect(await src.readText('user/1000000001/filament/A.json')).toBe('{"name":"changed A"}');
   });
 
   it('rejects unknown or unsafe ids without writing', async () => {

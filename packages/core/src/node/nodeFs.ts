@@ -88,6 +88,13 @@ export function nodeFs(rootAbs: string, options: NodeFsOptions = {}): NodeFs {
       for (const e of entries) {
         if (e.isDirectory()) out.push({ name: e.name, kind: 'dir' });
         else if (e.isFile()) out.push({ name: e.name, kind: 'file' });
+        else if (e.isSymbolicLink()) {
+          // Symlinks and Windows junctions (e.g. a filament folder moved to OneDrive): reading a
+          // path through them works, so listing must show them too, or a backup would skip
+          // files that a repair then edits.
+          const kind = await linkTargetKind(nodePath.join(resolve(dir), e.name));
+          if (kind) out.push({ name: e.name, kind });
+        }
       }
       return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     },
@@ -109,6 +116,22 @@ export function nodeFs(rootAbs: string, options: NodeFsOptions = {}): NodeFs {
       await wrapNotFound(path, () => fsp.rm(resolve(path), { recursive: true }));
     },
   };
+}
+
+/**
+ * What a symlink or junction points at. A dangling link holds no data, so it is left out (null);
+ * any other failure (e.g. EPERM) is thrown, so nothing reachable is silently skipped.
+ */
+async function linkTargetKind(abs: string): Promise<'file' | 'dir' | null> {
+  let st;
+  try {
+    st = await fsp.stat(abs);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    throw err;
+  }
+  return st.isDirectory() ? 'dir' : st.isFile() ? 'file' : null;
 }
 
 // Windows can briefly lock a file (antivirus, indexer), which makes rename fail with EPERM/EBUSY.

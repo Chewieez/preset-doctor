@@ -4,7 +4,7 @@ import { unzipSync } from 'fflate';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { BACKUPS_DIR, BrowserDoctor } from './browserDoctor';
 import { memoryHandleStore, type HandleStore } from './handleStore';
-import { FakeDir, fakeFolder, fakeFolderFromDisk } from './testing/fakeHandle';
+import { FakeDir, FakeFile, fakeFolder, fakeFolderFromDisk } from './testing/fakeHandle';
 
 const FIXTURE = fileURLToPath(
   new URL('../../../packages/core/src/__fixtures__/broken-r1', import.meta.url),
@@ -269,6 +269,84 @@ describe('BrowserDoctor', () => {
 
     copy.permission = 'granted';
     expect(ok(await d.listBackups())).toHaveLength(1);
+  });
+
+  it('backs up again after a stale repair, even when the same folder is picked again', async () => {
+    const d = makeDoctor();
+    const root = await picked(d);
+    const { defaults } = ok(await d.scan(root));
+    const { planId } = ok(await d.plan(defaults, { updateBaseId: true }));
+    copy.put(ORPHAN, `${copy.text(ORPHAN)!} `);
+    expect(error(await d.apply(planId)).code).toBe('stale');
+    const staleZips = zips();
+
+    // The same folder again, as a new handle object (isSameEntry is true for real handles).
+    const again = Object.create(copy) as FakeDir;
+    const same = async (other: unknown): Promise<boolean> => other === copy || other === again;
+    copy.isSameEntry = same;
+    again.isSameEntry = same;
+    await picked(d, again);
+    const rescan = ok(await d.scan(root));
+    const applied = ok(
+      await d.apply(ok(await d.plan(rescan.defaults, { updateBaseId: true })).planId),
+    );
+    expect(applied.backupIsNew).toBe(true);
+    expect(staleZips).not.toContain(`${applied.backup.id}.zip`);
+    // The new backup holds the folder as it was just before this repair.
+    const zip = copy.at(`${BACKUPS_DIR}/${applied.backup.id}.zip`) as { data: Uint8Array };
+    expect(new TextDecoder().decode(unzipSync(zip.data)[ORPHAN])).toMatch(/ $/);
+  });
+
+  it('says to choose the folder again when it was deleted after picking', async () => {
+    const d = makeDoctor();
+    const root = await picked(d);
+    const gone = (): never => {
+      const err = new Error('A requested file or directory could not be found.');
+      err.name = 'NotFoundError';
+      throw err;
+    };
+    copy.getDirectoryHandle = async () => gone();
+    copy.getFileHandle = async () => gone();
+    copy.values = async function* () {
+      yield* [];
+      gone();
+    };
+    const e = error(await d.scan(root));
+    expect(e.code).toBe('scan-failed');
+    expect(e.message).toMatch(/can't be read anymore.*choose it again/);
+  });
+
+  it('reports a restore that stops part-way, naming the backup that undoes it', async () => {
+    const d = makeDoctor();
+    const root = await picked(d);
+    const { defaults } = ok(await d.scan(root));
+    const applied = ok(await d.apply(ok(await d.plan(defaults, { updateBaseId: true })).planId));
+
+    // The browser takes the permission away while the restore is writing.
+    let writes = 0;
+    const real = FakeFile.prototype.createWritable;
+    FakeFile.prototype.createWritable = async function (this: FakeFile) {
+      if (this.name.endsWith('.json') && ++writes === 3) {
+        const err = new Error('Permission revoked');
+        err.name = 'NotAllowedError';
+        throw err;
+      }
+      return real.call(this);
+    };
+    let r: IpcResult<unknown>;
+    try {
+      r = await d.restore(root, applied.backup.id);
+    } finally {
+      FakeFile.prototype.createWritable = real;
+    }
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.code).toBe('partial');
+    expect(r.error.message).toContain('The restore stopped part-way at');
+    expect(r.error.backupId).toBe(`${applied.backup.id}-2`);
+    expect(r.error.message).toContain(`restore backup ${applied.backup.id}-2`);
+    expect(r.error.written).toHaveLength(2);
+    expect(zips()).toContain(`${applied.backup.id}-2.zip`);
   });
 
   it('cannot open File Explorer or a donation page', async () => {

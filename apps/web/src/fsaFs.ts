@@ -71,23 +71,31 @@ export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {
     guardWrite(path);
     const { segments, name } = split(path);
     const dir = await dirAt(segments, path, true);
+    // getFileHandle({create}) makes an empty file at once; if the write then fails, a new file
+    // is removed again, so a failed backup doesn't leave a 0-byte zip that lists as a backup.
+    const isNew = (await kindOf(dir, name)) === null;
     let handle: FileSystemFileHandle;
     try {
       handle = await dir.getFileHandle(name, { create: true });
     } catch (err) {
       throw mapError(err, path);
     }
-    const stream = await handle.createWritable();
     try {
-      // A fresh copy: the stream may keep the buffer, and callers may reuse theirs.
-      await stream.write(new Uint8Array(data));
-      await stream.close();
+      const stream = await handle.createWritable();
+      try {
+        // A fresh copy: the stream may keep the buffer, and callers may reuse theirs.
+        await stream.write(new Uint8Array(data));
+        await stream.close();
+      } catch (err) {
+        await stream.abort().catch(() => undefined);
+        throw err;
+      }
+      const back = new Uint8Array(await (await handle.getFile()).arrayBuffer());
+      if (!bytesEqual(back, data)) throw new Error(`Write verification failed: ${path}`);
     } catch (err) {
-      await stream.abort().catch(() => undefined);
+      if (isNew) await dir.removeEntry(name).catch(() => undefined);
       throw err;
     }
-    const back = new Uint8Array(await (await handle.getFile()).arrayBuffer());
-    if (!bytesEqual(back, data)) throw new Error(`Write verification failed: ${path}`);
   };
 
   return {
@@ -103,8 +111,13 @@ export function fsaFs(root: FileSystemDirectoryHandle, options: FsaFsOptions = {
       const rel = normalizePath(dirPath);
       const dir = await dirAt(rel === '' ? [] : rel.split('/'), dirPath);
       const out: DirEntry[] = [];
-      for await (const entry of dir.values()) {
-        out.push({ name: entry.name, kind: entry.kind === 'directory' ? 'dir' : 'file' });
+      try {
+        for await (const entry of dir.values()) {
+          out.push({ name: entry.name, kind: entry.kind === 'directory' ? 'dir' : 'file' });
+        }
+      } catch (err) {
+        // E.g. the picked folder itself was deleted: NotFoundError becomes "not found".
+        throw mapError(err, dirPath);
       }
       return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     },

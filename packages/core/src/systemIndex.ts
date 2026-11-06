@@ -5,7 +5,7 @@
  * bodies (setting_id, inherits, compatible_printers) are read lazily and cached, because R1 only
  * needs a handful of siblings per orphan; loadAll() is there for callers that want everything.
  */
-import { dirname, joinPath, type PresetFs } from './fs.js';
+import { dirname, isNotFound, joinPath, type PresetFs } from './fs.js';
 import {
   modelMatchesCode,
   parseCompatiblePrinter,
@@ -107,8 +107,21 @@ export async function loadSystemIndex(
 
   let missing: SystemEntry[] = [];
   if (options.checkFiles ?? true) {
-    const present = await existingFiles(fs, listed);
+    const { present, unreadable } = await existingFiles(fs, listed);
+    // An unreadable folder, or not one listed file present (system/BBL not copied, a broken
+    // update), means the presets can't be checked, not that every parent is gone.
+    if (unreadable) {
+      throw new SystemIndexError(
+        `Could not read the system presets in ${unreadable.dir} (${unreadable.message}).`,
+      );
+    }
     missing = listed.filter((e) => !present.has(e.path.toLowerCase()));
+    if (listed.length > 0 && missing.length === listed.length) {
+      throw new SystemIndexError(
+        `None of the ${listed.length} system presets listed in ${indexPath} were found: the ` +
+          `system\\${vendor} folder is missing or incomplete.`,
+      );
+    }
     for (const e of missing) {
       warnings.push(
         `System preset "${e.name}" is listed in ${indexPath} but ${e.path} is missing.`,
@@ -305,21 +318,27 @@ function readList(
  * Lowercased paths of the listed files that exist, using one listing per folder rather than one
  * exists() per file. Lowercased because Windows (where Studio runs) ignores case.
  */
-async function existingFiles(fs: PresetFs, entries: SystemEntry[]): Promise<Set<string>> {
+async function existingFiles(
+  fs: PresetFs,
+  entries: SystemEntry[],
+): Promise<{ present: Set<string>; unreadable: { dir: string; message: string } | null }> {
   const dirs = new Set(entries.map((e) => dirname(e.path)));
   const present = new Set<string>();
+  let unreadable: { dir: string; message: string } | null = null;
   await mapLimit([...dirs], LOAD_CONCURRENCY, async (dir) => {
     let listing;
     try {
       listing = await fs.list(dir);
-    } catch {
+    } catch (err) {
+      // A missing folder just means its presets are missing; any other error means unknown.
+      if (!isNotFound(err)) unreadable ??= { dir, message: (err as Error).message };
       return;
     }
     for (const f of listing) {
       if (f.kind === 'file') present.add(joinPath(dir, f.name).toLowerCase());
     }
   });
-  return present;
+  return { present, unreadable };
 }
 
 async function readBody(

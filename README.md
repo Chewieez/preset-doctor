@@ -49,7 +49,7 @@ your computer only, and its security policy blocks all network requests.
 
 | | Windows app | Web version |
 |---|---|---|
-| Steps | Scan, Fix. It repairs `%APPDATA%\BambuStudio` in place. | Copy folders out, Scan, Fix, copy `user` back. |
+| Steps | Scan, Fix. It repairs `%APPDATA%\BambuStudio` in place. | Copy folders out, Scan, Fix, copy the changed files back. |
 | Checks that Studio is closed | Yes, on its own. | No; you tick "I've closed Bambu Studio". |
 | Needs | Running an unsigned exe. | Chrome or Edge (Firefox and Safari can't open folders). |
 

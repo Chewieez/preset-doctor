@@ -197,6 +197,34 @@ describe('loadSystemIndex edge cases', () => {
     expect(index.warnings[0]).toMatch(/"B @BBL X2D".*system\/BBL\/filament\/B @BBL X2D.json/);
   });
 
+  it('throws, rather than calling every preset missing, when the vendor folder is gone or unreadable', async () => {
+    const list = [
+      { name: 'A @BBL X2D', sub_path: 'filament/A @BBL X2D.json' },
+      { name: 'C @BBL P1P', sub_path: 'filament/P1P/C @BBL P1P.json' },
+    ];
+    // Only BBL.json was copied.
+    const gone = memFs({ 'system/BBL.json': bbl(list) });
+    await expect(loadSystemIndex(gone)).rejects.toThrow(SystemIndexError);
+    await expect(loadSystemIndex(gone)).rejects.toThrow(/None of the 2 .*system\\BBL folder/);
+
+    // A folder that exists but can't be listed means "unknown", even if others are fine.
+    const inner = memFs({
+      'system/BBL.json': bbl(list),
+      'system/BBL/filament/A @BBL X2D.json': preset({ name: 'A @BBL X2D' }),
+      'system/BBL/filament/P1P/C @BBL P1P.json': preset({ name: 'C @BBL P1P' }),
+    });
+    const locked: PresetFs = {
+      ...inner,
+      list: async (dir) => {
+        if (dir === 'system/BBL/filament/P1P') throw new Error('EPERM: operation not permitted');
+        return inner.list(dir);
+      },
+    };
+    await expect(loadSystemIndex(locked)).rejects.toThrow(
+      /Could not read the system presets in system\/BBL\/filament\/P1P \(EPERM/,
+    );
+  });
+
   it('can skip the file check', async () => {
     const fs = memFs({
       'system/BBL.json': bbl([{ name: 'B @BBL X2D', sub_path: 'filament/B @BBL X2D.json' }]),

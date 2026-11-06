@@ -38,6 +38,34 @@ describe('fsaFs', () => {
     expect(FakeFile.openWritables).toBe(0);
   });
 
+  it('removes a new file again when its write fails, but keeps an existing one', async () => {
+    const root = fakeFolder('root', { 'old.zip': 'kept' });
+    const real = FakeFile.prototype.createWritable;
+    FakeFile.prototype.createWritable = async function (this: FakeFile) {
+      const stream = await real.call(this);
+      return {
+        ...stream,
+        write: async () => {
+          await stream.abort();
+          const err = new Error('The quota has been exceeded.');
+          err.name = 'QuotaExceededError';
+          throw err;
+        },
+      };
+    };
+    try {
+      const fs = fsaFs(root.handle);
+      await expect(fs.writeBytes('backups/new.zip', new Uint8Array([1]))).rejects.toThrow(/quota/);
+      await expect(fs.writeBytes('old.zip', new Uint8Array([1]))).rejects.toThrow(/quota/);
+    } finally {
+      FakeFile.prototype.createWritable = real;
+    }
+    // No 0-byte zip left behind to show up as an empty backup.
+    expect(root.at('backups/new.zip')).toBeUndefined();
+    expect(root.text('old.zip')).toBe('kept');
+    expect(FakeFile.openWritables).toBe(0);
+  });
+
   it('keeps the caller buffer independent of what was written', async () => {
     const root = fakeFolder('root');
     const data = new Uint8Array([1, 2, 3]);

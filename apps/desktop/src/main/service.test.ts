@@ -177,6 +177,62 @@ describe('DoctorService', () => {
     expect(ok(await s.listBackups())).toHaveLength(2);
   });
 
+  it('reports a restore that stops part-way, with the backup that undoes it', async () => {
+    const s = makeService();
+    const { defaults } = ok(await s.scan(root, undefined));
+    const applied = ok(await s.apply(ok(await s.plan(defaults, { updateBaseId: true })).planId));
+    // A folder where the preset file should be: the restore can't write it.
+    const path = join(root, ...ORPHAN.split('/'));
+    await rm(path);
+    await mkdir(path);
+
+    const r = await s.restore(root, applied.backup.id);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error.code).toBe('partial');
+    expect(r.error.message).toContain('The restore stopped part-way at');
+    // The backup it names is the one made just before the restore, not the one restored.
+    expect(r.error.backupId).toBeDefined();
+    expect(r.error.backupId).not.toBe(applied.backup.id);
+    expect(r.error.message).toContain(`restore backup ${r.error.backupId}`);
+    const safety = ok(await s.listBackups()).find((b) => b.id === r.error.backupId);
+    expect(safety?.reason).toBe('before-restore');
+
+    // The session's backup no longer matches the files, so the next repair makes a new one.
+    await rm(path, { recursive: true });
+    await cp(join(FIXTURE, ...ORPHAN.split('/')), path);
+    const rescan = ok(await s.scan(root, undefined));
+    const again = ok(
+      await s.apply(ok(await s.plan(rescan.defaults, { updateBaseId: true })).planId),
+    );
+    expect(again.backupIsNew).toBe(true);
+  }, 20000);
+
+  it('makes a fresh backup when a file to repair was added after the session backup', async () => {
+    const s = makeService();
+    const { defaults } = ok(await s.scan(root, undefined));
+    const first = ok(await s.apply(ok(await s.plan(defaults, { updateBaseId: true })).planId));
+
+    const added = 'user/1000000001/filament/Added Petg 06.json';
+    const text = (await readFile(join(FIXTURE, ...ORPHAN.split('/')), 'utf8')).replace(
+      /"name": "[^"]*"/,
+      '"name": "Added Petg 06"',
+    );
+    await writeFile(join(root, ...added.split('/')), text);
+    const rescan = ok(await s.scan(root, undefined));
+    const plan = ok(
+      await s.plan(
+        rescan.defaults.filter((c) => c.presetPath === added),
+        { updateBaseId: true },
+      ),
+    );
+    expect(plan.changes.map((c) => c.path)).toContain(added);
+    const second = ok(await s.apply(plan.planId));
+    expect(second.backupIsNew).toBe(true);
+    expect(second.backup.id).not.toBe(first.backup.id);
+    expect(await zipCount()).toBe(2);
+  });
+
   it('restores into the folder the UI names, not the last one scanned', async () => {
     const s = makeService();
     const { defaults } = ok(await s.scan(root, undefined));

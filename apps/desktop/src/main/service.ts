@@ -15,8 +15,10 @@ import {
   FixError,
   isBackupId,
   listBackups,
+  missingFromBackup,
   planFixes,
   restoreBackup,
+  RestoreError,
   scan,
   ScanError,
   StaleChangeError,
@@ -166,11 +168,29 @@ export class DoctorService {
         this.sessions.clear();
         this.studioSeenRunning = false;
       }
-      const session = this.sessionFor(plan.root);
-      const backupIsNew = session.backup === null;
-      const backup = await session.ensureBackupOnce();
+      let session = this.sessionFor(plan.root);
+      let backupIsNew = session.backup === null;
+      let backup = await session.ensureBackupOnce();
       // Whatever happens next, the files no longer match any other preview.
       this.plans.clear();
+      const paths = plan.changes.map((c) => c.path);
+      // A file the session's backup doesn't hold (added since) gets a fresh backup first.
+      if (!backupIsNew && missingFromBackup(backup, paths).length > 0) {
+        this.sessions.delete(rootKey(plan.root));
+        session = this.sessionFor(plan.root);
+        backupIsNew = true;
+        backup = await session.ensureBackupOnce();
+      }
+      // Never write what the backup can't undo (e.g. files behind a link it couldn't follow).
+      const missing = missingFromBackup(backup, paths);
+      if (missing.length > 0) {
+        this.sessions.delete(rootKey(plan.root));
+        throw new Refusal(
+          'failed',
+          `Backup ${backup.id} doesn't include ${missing.join(', ')}, so the repair couldn't be ` +
+            'undone and nothing was written. Is part of the user folder a link to another place?',
+        );
+      }
       try {
         const { written } = await applyChanges(nodeFs(plan.root), plan.changes);
         return { written, backup, backupIsNew };
@@ -215,10 +235,22 @@ export class DoctorService {
         });
       } catch (err) {
         if (err instanceof BackupSourceError) throw new Refusal('other-source', err.message);
+        if (err instanceof RestoreError) {
+          throw new Refusal(
+            'partial',
+            err.message +
+              (err.safetyBackup ? '' : ' Restore the same backup again once the problem is fixed.'),
+            {
+              written: err.restored,
+              ...(err.safetyBackup ? { backupId: err.safetyBackup.id } : {}),
+            },
+          );
+        }
         throw err;
+      } finally {
+        // The files may no longer match this session's backup; the next repair makes a new one.
+        this.sessions.delete(rootKey(dir));
       }
-      // The files no longer match this session's backup; the next repair makes a new one.
-      this.sessions.delete(rootKey(dir));
       return { ...result, backupId };
     });
   }

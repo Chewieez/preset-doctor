@@ -10,6 +10,8 @@ interface Props {
   /** Web: the "I've closed Bambu Studio" checkbox, which stands in for the process check. */
   studioGate?: ReactNode;
   onRestored: (backupId: string, restoredCount: number) => void;
+  /** The restore wrote some files and then failed; the message names the backup that undoes it. */
+  onRestoreStopped: (message: string) => void;
   onClose: () => void;
 }
 
@@ -19,7 +21,15 @@ const REASON: Record<NonNullable<BackupInfo['reason']>, string> = {
   manual: 'Saved by hand',
 };
 
-export function BackupsDialog({ platform, root, studio, studioGate, onRestored, onClose }: Props) {
+export function BackupsDialog({
+  platform,
+  root,
+  studio,
+  studioGate,
+  onRestored,
+  onRestoreStopped,
+  onClose,
+}: Props) {
   const web = platform === 'web';
   const [backups, setBackups] = useState<BackupInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +51,9 @@ export function BackupsDialog({ platform, root, studio, studioGate, onRestored, 
     } catch (e) {
       if (e instanceof AppError && e.code === 'other-source') {
         setOtherSource({ id, message: e.message });
+      } else if (e instanceof AppError && e.code === 'partial') {
+        onRestoreStopped(e.message);
+        return;
       } else {
         setError(messageOf(e));
       }

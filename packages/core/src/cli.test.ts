@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EXIT, main, type CliDeps } from './cli.js';
@@ -131,6 +131,31 @@ describe('preset-doctor CLI', () => {
     expect(r.out).not.toContain('base_id');
   });
 
+  it('fix: the printed next command keeps --user, --no-base-id and --backups', async () => {
+    const s = setup('multi-account');
+    const dry = await s.run(
+      'fix',
+      '--user',
+      '1000000002',
+      '--no-base-id',
+      '--backups',
+      s.backupsDir,
+    );
+    expect(dry.code).toBe(EXIT.ok);
+    expect(dry.out).toContain('Dry run: nothing was written.');
+    const hint = dry.out.split('\n').find((l) => l.includes('--apply --yes'))!;
+    expect(hint).toContain(' --user 1000000002 --apply --yes --no-base-id --backups ');
+
+    // Several accounts: the hint names the one scanned even when --user wasn't given, since
+    // the default could change (e.g. after presets are added to another account).
+    const scanned = await s.run('scan', '--user', '1000000002');
+    expect(scanned.out).toMatch(
+      /To preview repairs: preset-doctor fix .* --user 1000000002 --dry-run/,
+    );
+    const single = setup();
+    expect((await single.run('fix')).out).not.toContain('--user');
+  });
+
   it('fix --apply: needs --yes and a closed Studio, else writes nothing', async () => {
     const s = setup();
     const before = s.read(PETG06);
@@ -183,11 +208,14 @@ describe('preset-doctor CLI', () => {
   });
 
   it('scan: exits 3, not 0, when the system presets are missing or corrupt', async () => {
-    for (const damage of ['remove', 'corrupt'] as const) {
+    // 'no-presets': BBL.json copied without the system/BBL folder (a partial copy for the web
+    // version, or a half-done update): unknown, not 'every parent is gone'.
+    for (const damage of ['remove', 'corrupt', 'no-presets'] as const) {
       const s = setup('healthy');
       const index = join(s.root, 'system', 'BBL.json');
       if (damage === 'remove') rmSync(index);
-      else writeFileSync(index, '{ half-written');
+      else if (damage === 'corrupt') writeFileSync(index, '{ half-written');
+      else rmSync(join(s.root, 'system', 'BBL'), { recursive: true });
       const r = await s.run('scan');
       expect(r.code, damage).toBe(EXIT.failed);
       expect(r.out).toContain('System presets: could not be read');
@@ -221,6 +249,24 @@ describe('preset-doctor CLI', () => {
     expect((await restoreInto('--from-other-folder')).code).toBe(EXIT.ok);
     expect(copy.read(PETG06)).toBe(repaired);
   });
+
+  it('backups restore: a restore that stops part-way names the safety backup', async () => {
+    const s = setup();
+    expect((await s.run('fix', '--apply', '--yes')).code).toBe(EXIT.ok);
+    // A folder where a preset file should be: the restore can't write it, on any OS.
+    rmSync(join(s.root, ...PETG06.split('/')));
+    mkdirSync(join(s.root, ...PETG06.split('/')));
+
+    const r = await s.run('backups', 'restore', '2026-11-05T17-30-00', s.root, '--yes');
+    expect(r.code).toBe(EXIT.failed);
+    expect(r.err).toContain(
+      'The restore stopped part-way at user/1000000001/filament/Anycubic Petg 06.json',
+    );
+    expect(r.err).toMatch(/\d+ file\(s\) were already put back/);
+    expect(r.err).toContain(
+      'To go back to how it was before this restore: preset-doctor backups restore 2026-11-05T17-30-00-2',
+    );
+  }, 20000);
 
   it('backups: empty list, unknown subcommand, unknown id', async () => {
     const s = setup('healthy');

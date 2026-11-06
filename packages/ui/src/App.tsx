@@ -154,6 +154,9 @@ export function App() {
       if (picked === null) return;
       setRoot(picked);
       setPayload(null);
+      // The account and the "Studio is closed" confirmation were about the previous folder.
+      setUserId(undefined);
+      setStudioConfirmed(false);
       setNotice(null);
       setCopyBack(null);
       setSelectedPath(null);
@@ -204,6 +207,8 @@ export function App() {
       const n = presetFilesIn(r.written);
       closeReview();
       noteWritten(r.written);
+      // The next step opens Studio, so the next write needs a fresh confirmation.
+      setStudioConfirmed(false);
       const where = web ? ', in the preset-doctor-backups folder' : '';
       setNotice({
         kind: 'success',
@@ -459,6 +464,7 @@ export function App() {
           onRestored={(id, count) => {
             setBackupsOpen(false);
             noteWritten([], true);
+            setStudioConfirmed(false);
             setNotice({
               kind: 'success',
               title: `Restored backup ${id}.`,
@@ -469,6 +475,12 @@ export function App() {
                   : []),
               ],
             });
+            void runScan(root, userId);
+          }}
+          onRestoreStopped={(message) => {
+            // Some files were put back, some not: say which backup undoes it, show the real state.
+            setBackupsOpen(false);
+            setNotice({ kind: 'error', title: 'The restore stopped part-way.', lines: [message] });
             void runScan(root, userId);
           }}
         />

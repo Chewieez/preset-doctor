@@ -96,6 +96,43 @@ export function isBackupId(id: string): boolean {
   return ID_PATTERN.test(id);
 }
 
+/**
+ * A write was about to touch files the backup just made does not hold, so it could not be undone.
+ * Nothing was written.
+ */
+export class BackupCoverageError extends Error {
+  constructor(
+    readonly missing: string[],
+    readonly backupId: string,
+  ) {
+    super(
+      `Backup ${backupId} does not include ${missing.join(', ')}, so the repair could not be ` +
+        'undone and nothing was written. Is part of the user folder a link to another place? ' +
+        'Move those files back into the user folder, then scan again.',
+    );
+    this.name = 'BackupCoverageError';
+  }
+}
+
+/** The user/ files each backup made in this process holds, for assertBackupCovers. */
+const backedUpFiles = new WeakMap<BackupInfo, ReadonlySet<string>>();
+
+/** The paths in `paths` that `backup` does not hold (all of them for a backup of unknown content). */
+export function missingFromBackup(backup: BackupInfo, paths: readonly string[]): string[] {
+  const files = backedUpFiles.get(backup);
+  return files ? paths.filter((p) => !files.has(normalizePath(p))) : [...paths];
+}
+
+/**
+ * Throws BackupCoverageError unless every path is in `backup`, which must be the object
+ * createBackup (or a BackupSession) returned in this process. Call it before writing, so a
+ * listing that misses files (links, a future adapter) can never lead to a write with no undo.
+ */
+export function assertBackupCovers(backup: BackupInfo, paths: readonly string[]): void {
+  const missing = missingFromBackup(backup, paths);
+  if (missing.length > 0) throw new BackupCoverageError(missing, backup.id);
+}
+
 /** Zips the whole `user/` tree into `<timestamp>.zip`, then re-reads and checks every file. */
 export async function createBackup(
   srcFs: PresetFs,
@@ -146,7 +183,7 @@ export async function createBackup(
     throw new Error(`Backup check failed: ${path} has an unexpected number of files.`);
   }
 
-  return {
+  const info: BackupInfo = {
     id,
     path,
     fileCount: files.size,
@@ -156,6 +193,8 @@ export async function createBackup(
     ...(manifest.sourceRoot !== undefined ? { sourceRoot: manifest.sourceRoot } : {}),
     accounts,
   };
+  backedUpFiles.set(info, new Set(files.keys()));
+  return info;
 }
 
 /** Every backup in the backups folder, newest first. A missing backups folder means none. */
@@ -217,8 +256,32 @@ export interface RestoreOptions {
 export interface RestoreResult {
   /** Backup of the state just before the restore, so the restore itself can be undone. */
   safetyBackup: BackupInfo | null;
-  /** Number of files written back. */
+  /** Number of files written back (files that already matched the backup are not counted). */
   restoredCount: number;
+}
+
+/**
+ * A restore stopped part-way: the `restored` files already hold the backup's contents, the rest
+ * do not. `safetyBackup` holds the state from just before the restore, so restoring it undoes
+ * the part that was done.
+ */
+export class RestoreError extends Error {
+  constructor(
+    readonly failedPath: string,
+    readonly restored: string[],
+    readonly safetyBackup: BackupInfo | null,
+    cause: unknown,
+  ) {
+    super(
+      `The restore stopped part-way at ${failedPath} (${(cause as Error | null)?.message ?? String(cause)}). ` +
+        `${restored.length} file(s) were already put back.` +
+        (safetyBackup
+          ? ` To go back to how it was before this restore, restore backup ${safetyBackup.id}.`
+          : ''),
+      { cause },
+    );
+    this.name = 'RestoreError';
+  }
 }
 
 /**
@@ -270,9 +333,32 @@ export async function restoreBackup(
       })
     : null;
 
-  for (const d of dirs) await srcFs.mkdir(d);
-  for (const [p, data] of files) await srcFs.writeBytes(p, data);
-  return { safetyBackup, restoredCount: files.size };
+  const restored: string[] = [];
+  let at = USER_DIR;
+  try {
+    for (const d of dirs) {
+      at = d;
+      await srcFs.mkdir(d);
+    }
+    for (const [p, data] of files) {
+      at = p;
+      // Files that already match are skipped: fewer writes, fewer chances to stop part-way.
+      if (await hasBytes(srcFs, p, data)) continue;
+      await srcFs.writeBytes(p, data);
+      restored.push(p);
+    }
+  } catch (err) {
+    throw new RestoreError(at, restored, safetyBackup, err);
+  }
+  return { safetyBackup, restoredCount: restored.length };
+}
+
+async function hasBytes(fs: PresetFs, path: string, data: Uint8Array): Promise<boolean> {
+  try {
+    return bytesEqual(await fs.readBytes(path), data);
+  } catch {
+    return false;
+  }
 }
 
 /** Makes at most one backup per session, the first time something is about to be written. */
@@ -306,22 +392,31 @@ export class BackupSession {
   }
 }
 
+/** Studio's user/ tree is about four levels deep; far deeper means a folder link loop. */
+const MAX_TREE_DEPTH = 32;
+
 async function readTree(
   fs: PresetFs,
   dir: string,
 ): Promise<{ files: Map<string, Uint8Array>; dirs: string[] }> {
   const files = new Map<string, Uint8Array>();
   const dirs: string[] = [];
-  const walk = async (d: string): Promise<void> => {
+  const walk = async (d: string, depth: number): Promise<void> => {
+    // A link that points back up the tree would otherwise recurse forever.
+    if (depth > MAX_TREE_DEPTH) {
+      throw new Error(
+        `"${d}" is nested too deeply to back up. Is a folder in it a link to one of its parents?`,
+      );
+    }
     const entries = await fs.list(d);
     if (entries.length === 0) dirs.push(d);
     for (const e of entries) {
       const p = joinPath(d, e.name);
-      if (e.kind === 'dir') await walk(p);
+      if (e.kind === 'dir') await walk(p, depth + 1);
       else files.set(p, await fs.readBytes(p));
     }
   };
-  await walk(dir);
+  await walk(dir, 0);
   return { files, dirs };
 }
 
