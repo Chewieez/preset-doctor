@@ -27,7 +27,7 @@ import { memFs } from '../memFs.js';
 import { parseCompatiblePrinter, parsePresetName, sameNozzle } from '../names.js';
 import { buildUserIndex } from '../resolve.js';
 import { checkR1 } from '../rules/r1.js';
-import { loadSystemIndexes, type SystemIndex } from '../systemIndex.js';
+import { loadSystemIndexes, studioNameLookup, type SystemIndex } from '../systemIndex.js';
 import type { Finding, UserPreset } from '../types.js';
 
 export type Outcome = 'correct' | 'wrong' | 'unselected' | 'medium' | 'none';
@@ -97,6 +97,10 @@ function without(sys: SystemIndex, hidden: string): SystemIndex {
     namesWithStem: (s) => sys.namesWithStem(s).filter((n) => n !== hidden),
     load: (n) => (n === hidden ? Promise.resolve(null) : sys.load(n)),
     loadAll: async () => (await sys.loadAll()).filter((p) => p.name !== hidden),
+    findByStudioName: async (n) => {
+      const hit = await sys.findByStudioName(n);
+      return hit && hit.name !== hidden ? hit : null;
+    },
   };
 }
 
@@ -190,10 +194,14 @@ export async function simulateR1(system: SystemIndex): Promise<SimulationResult>
           compat ? s.required.map((n) => `${s.model} ${n} nozzle`) : null,
           baseId ? (s.settingId ?? null) : null,
         );
+        // Parents resolve by Studio's names, exactly as scan() does.
         const ctx = {
           system: sys,
           presets: [preset],
-          resolve: { system: sys, userByName: buildUserIndex([preset]) },
+          resolve: {
+            system: await studioNameLookup(sys, [preset]),
+            userByName: buildUserIndex([preset]),
+          },
         };
         const cs = candidatesOf(await checkR1(preset, ctx));
         const pick = cs.find((c) => c.preselected);

@@ -603,7 +603,7 @@ Expected: no findings at all.
 ## broken-r1/
 
 \`BambuStudio.conf\`: \`sync_user_preset: true\` (as on the real machine), so expect one scan-level
-R5_CLOUD_SYNC warning.
+R5_CLOUD_SYNC note (severity \`info\`).
 \`user/1000000001/filament/\`:
 
 - The 18 real \`... 06.json\` orphans (no sidecars, as on disk). They also carry their own

@@ -187,7 +187,7 @@ export function repairNotice(
         : 'Next: open Bambu Studio and check that your presets are back. If anything looks wrong, use "Restore a backup".',
       ...(ctx.cloud
         ? [
-            'Cloud sync is on: if a repair comes undone after Studio syncs, turn sync off and repair again.',
+            'Cloud sync is on: to upload a repair to your other computers, open the preset in Bambu Studio and save it.',
           ]
         : []),
     ],

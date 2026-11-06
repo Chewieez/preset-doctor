@@ -11,13 +11,13 @@ Free, open source, works offline. Windows. Not affiliated with Bambu Lab.
 ## What it does
 
 You update Bambu Studio and some of your own filament presets are gone. They don't show in the
-dropdown, or they turn up under "Unsupported". The files are still on your computer, but Studio
-can't use them anymore.
+dropdown at all, not even under "Unsupported presets". The files are still on your computer, but
+Studio can't use them anymore.
 
 **Why it happens:** each custom preset remembers the Bambu preset it was based on, by **name**
 (for example `Generic PETG @BBL X2D 0.6 nozzle`). Studio updates sometimes rename those built-in
 presets, for example to `Generic PETG @BBL X2D`. Your preset then points at a name that no
-longer exists, so Studio hides it.
+longer exists, so Studio skips it when it loads your presets.
 
 **What Preset Doctor does:**
 
@@ -58,8 +58,7 @@ on your computer.
 
 Browsers aren't allowed to open anything under `%APPDATA%`, so the web version works on a copy:
 
-1. **Close Bambu Studio and keep it closed** until step 4 is done. Also turn off preset sync or
-   log out of Studio.
+1. **Close Bambu Studio and keep it closed** until step 4 is done.
 2. Right before repairing (an older copy lacks your newer Studio changes), in File Explorer, paste `%APPDATA%\BambuStudio` into the address bar. Copy the **`system`** and
    **`user`** folders and the **`BambuStudio.conf`** file into a new folder, for example
    `Documents\PresetDoctor-copy`. Don't copy the whole BambuStudio folder: its logs can make it
@@ -79,13 +78,17 @@ Browsers aren't allowed to open anything under `%APPDATA%`, so the web version w
 
 1. **Close Bambu Studio.** Preset Doctor won't change anything while Studio is running, because
    Studio could overwrite the repair when it saves.
-2. **Turn off preset sync, or log out of Bambu Studio.** If cloud sync is on, the cloud copy of a
-   preset may undo the fix the next time Studio syncs. Preset Doctor warns you when sync is on.
+2. **Cloud preset sync can stay on.** The cloud copy of a hidden preset names the same missing
+   parent, so Studio skips it and can't undo the repair. The repair usually isn't uploaded on its
+   own, though: to get it onto your other computers, open each repaired preset in Studio and save
+   it.
+   See [the FAQ](#faq) for the details and the one rare exception.
 3. **Open Preset Doctor, scan, review, fix.**
    - Click **Scan**. It finds your Bambu Studio folder (`%APPDATA%\BambuStudio`) on its own.
    - Click a hidden preset to see why it's hidden, the suggested new parent and the exact change.
      If the suggestion looks wrong, pick another candidate or leave that preset alone.
-   - Click **Fix selected**. Then open Bambu Studio and check that your presets are back.
+   - Click **Fix selected**. Then open Bambu Studio and check that your presets are back. There
+     is no cache to clear: Studio reads the preset files every time it starts.
 
 ## Safety
 
@@ -158,13 +161,34 @@ reported but not changed. You can recreate it in Studio from a similar filament.
 No. Notes cover harmless things, like a missing `.info` sync file or a name that differs from the
 file name only in capital letters. Studio still shows those presets.
 
+**My preset is greyed out under "Unsupported presets". Can Preset Doctor fix it?**
+Not yet, and it isn't the problem Preset Doctor fixes: that preset still loads. Studio greys a
+preset out when it isn't made for the printer and nozzle you selected (or for your process
+preset), for example a preset based on a 0.4 nozzle preset while a 0.6 nozzle is selected.
+Pick a matching printer or nozzle, or base the preset on the right one in Studio. A preset whose
+parent is missing doesn't show anywhere, not even there; that's the one Preset Doctor repairs.
+
+**Do I need to turn off cloud preset sync?**
+Probably not. This comes from reading Bambu Studio's source code (version 02.09.01.70); it hasn't
+been confirmed by watching Studio yet ([SPEC.md §10](SPEC.md#10-open-questions-answer-by-testing-on-the-fixtures-and-in-studio-not-from-research)).
+When Studio syncs, a cloud copy whose parent is missing is skipped the same way the local file was,
+so it can't put the broken version back. Studio usually doesn't upload a file that was changed
+outside it either, so the repair stays on this computer until you open the preset in Studio and
+save it. (A preset that was never synced, or still had changes waiting to sync, is the exception:
+Studio uploads it on its own once the repair makes it load, which does no harm.)
+Turning sync off only postpones syncing, and Studio asks you to turn it back on when you log in.
+One rare case: if a repaired preset's cloud copy was deleted (say, from another computer), Studio
+may delete the repaired file the next time you log in. Restore it from Preset Doctor's backup.
+
 **Does it work with OrcaSlicer, or on Mac?**
 Not yet. It supports Bambu Studio on Windows, and filament presets only.
 
 **What does it change exactly?**
 It changes the `inherits` line in the preset's `.json` file. If the preset has a `.info` sync file
-with a `base_id` line, it also changes `base_id` to match the new parent, as Studio does itself.
-It never touches `updated_time`. If a preset's internal name doesn't match its file name, it can
+with a `base_id` line, it also changes `base_id` to match the new parent, the way Studio writes it
+for a freshly created preset. (Studio itself leaves `base_id` as it was when a preset's parent
+changes, and only uses it for cloud sync, never to find the parent.) It never touches
+`updated_time` or `sync_info`. If a preset's internal name doesn't match its file name, it can
 also fix the name.
 
 ## Development
@@ -181,7 +205,9 @@ apps/desktop/    Electron + React app (electron-vite). The main process runs cor
                  to it over a small typed IPC.
 apps/web/        Vite + React static site for GitHub Pages. Runs core in the page over a picked
                  folder (File System Access API).
-scripts/         fixture generator.
+scripts/         fixture generator; r1-simulate.ts and r1-history.ts measure R1's suggestions
+                 against a real system profile and against Bambu's profile history
+                 (docs/r1-history.md).
 ```
 
 ```sh

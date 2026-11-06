@@ -300,7 +300,7 @@ function printHeader(r: ScanResult, out: (l?: string) => void): void {
   );
   for (const f of r.findings.filter((x) => x.ruleId === R5_ID)) {
     out();
-    out(`WARNING: ${f.title}. ${f.explanation}`);
+    out(`Note: ${f.title}. ${f.explanation}`);
   }
   for (const w of r.warnings) out(`Note: ${w}`);
 }
@@ -409,7 +409,10 @@ async function fixCommand(
   out(`To undo: ${restoreHint(backup.id, root, args)}`);
   out('Next: open Bambu Studio and check that the presets are back.');
   if (result.findings.some((f) => f.ruleId === R5_ID)) {
-    out('Cloud preset sync is on: if a repair comes undone, turn sync off and repair again.');
+    out(
+      'Cloud preset sync is on: to upload a repair to your other computers, open the preset in ' +
+        'Bambu Studio and save it.',
+    );
   }
   return EXIT.ok;
 }

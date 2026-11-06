@@ -5,12 +5,27 @@
  * dry run both show as diffs. Edits are minimal (one JSON value each) so a diff is one line.
  * applyChanges writes them, refusing if any file changed since it was planned.
  *
- * Defaults for SPEC section 10's open questions, which need a person watching Studio to settle:
- *   1. base_id: updated to the new parent's setting_id (Studio writes it that way itself);
- *      `updateBaseId: false` / CLI `--no-base-id` turns that off.
- *   2. Hidden vs "Unsupported": R1 says "Studio hides it".
- *   3. Cloud sync: updated_time is never touched; scan warns (R5) when sync is on.
- *   4. Caches: none are cleared; the CLI asks the user to reopen Studio and check.
+ * Defaults for SPEC section 10's open questions. Bambu Studio's source answers each of them
+ * (provisionally, until confirmed in Studio; docs/real-test-checklist.md); citations are at
+ * v02.09.01.70 (56a57d00):
+ *   1. base_id: updated to the new parent's setting_id, which is what Studio writes for a
+ *      freshly created preset (it fills an empty base_id only, Preset.cpp:1985-1986, 2772-2773;
+ *      when inherits changes, Studio itself leaves base_id stale);
+ *      `updateBaseId: false` / CLI `--no-base-id` turns that off. Studio never uses base_id to
+ *      find a parent (only `inherits`, src/libslic3r/Preset.cpp:1516); it is cloud-sync metadata
+ *      (Preset.cpp:1703-1709, 1923). Never set equal to setting_id (Preset.cpp:1563).
+ *   2. Hidden vs "Unsupported": R1 says "Studio hides it". Studio skips an orphan while loading
+ *      ("can not find parent", Preset.cpp:1528-1531), so it is in no list at all.
+ *   3. Cloud sync: sync_info and updated_time are never touched. A cloud copy that still names
+ *      the missing parent is skipped too (Preset.cpp:2112-2124), so it can't undo the repair;
+ *      but the repair is usually not uploaded either: Studio skips a preset with no sidecar
+ *      (inherits set, base_id empty) and one whose sidecar has a setting_id and an empty
+ *      sync_info (get_user_presets, Preset.cpp:1922-1926). The exceptions upload on their own: a
+ *      sidecar with a base_id but no setting_id yet, or with sync_info = create/update pending
+ *      (src/slic3r/GUI/GUI_App.cpp:6849-6877). Saving the preset in Studio uploads it
+ *      (src/slic3r/GUI/Tab.cpp:7733-7743). Scan says so (R5).
+ *   4. Caches: none exist on disk (PresetBundle.cpp:900-930 rescans the folders on every load),
+ *      so none are cleared; the CLI asks the user to reopen Studio and check.
  */
 import {
   bytesEqual,
@@ -148,7 +163,10 @@ export async function planFixes(
 /** The base_id edit for one preset, or why its sidecar was left alone. */
 interface BaseIdResult {
   change?: Change;
-  /** A sentence for the preset's own change: its sidecar exists but could not be read. */
+  /**
+   * A sentence for the preset's own change, saying why base_id was left alone although the
+   * sidecar exists: it could not be read, or its setting_id is already the new parent's id.
+   */
   skipped?: string;
 }
 
@@ -182,6 +200,16 @@ async function baseIdChange(
   const info = parseInfoFile(before);
   const current = getInfoValue(info, INFO_KEYS.baseId);
   if (current === undefined || current === parent.settingId) return null;
+  // Studio treats base_id == setting_id as a broken sidecar: it clears setting_id on load
+  // (src/libslic3r/Preset.cpp:1563@v02.09.01.70) and before an upload
+  // (src/slic3r/GUI/GUI_App.cpp:6914-6917), which cuts the preset off from its cloud copy.
+  if (getInfoValue(info, INFO_KEYS.settingId)?.trim() === parent.settingId) {
+    return {
+      skipped:
+        "Its sync file's setting_id is already the new parent's id, so its base_id is left as " +
+        'it is.',
+    };
+  }
   return {
     change: {
       path: infoPath,

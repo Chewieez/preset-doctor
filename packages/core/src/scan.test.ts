@@ -5,7 +5,7 @@ import { defaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
 import { R1_ID } from './rules/r1.js';
 import { R4_ID } from './rules/r4.js';
-import { R5_ID, scan, ScanError } from './scan.js';
+import { CLOUD_SYNC_EXPLANATION, R5_ID, scan, ScanError } from './scan.js';
 import { loadSystemIndexes } from './systemIndex.js';
 import { fixtureRoot, type FixtureName } from './testing/fixtures.js';
 import { fakeStudio, sidecar } from './testing/studio.js';
@@ -250,11 +250,9 @@ describe('scan on fixtures', () => {
     const on = fakeStudio([], [], { conf: '{"app":{"sync_user_preset":true}}\n# MD5 checksum 0' });
     const off = fakeStudio([], [], { conf: '{"app":{"sync_user_preset":false}}' });
     const [f] = (await scan(on)).findings;
-    expect(f).toMatchObject({ ruleId: R5_ID, severity: 'warning', presetPath: 'BambuStudio.conf' });
-    expect(f?.explanation).toBe(
-      'Turn off preset sync or log out of Bambu Studio before repairing, or the cloud copy may ' +
-        'undo the fix.',
-    );
+    expect(f).toMatchObject({ ruleId: R5_ID, severity: 'info', presetPath: 'BambuStudio.conf' });
+    expect(f?.explanation).toBe(CLOUD_SYNC_EXPLANATION);
+    expect(f?.explanation).toContain('open each repaired preset in Bambu Studio and save it');
     expect((await scan(off)).findings).toEqual([]);
   });
 

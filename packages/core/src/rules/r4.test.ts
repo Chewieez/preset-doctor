@@ -3,7 +3,8 @@ import type { PresetFs } from '../fs.js';
 import { scan } from '../scan.js';
 import { fakeStudio, sidecar } from '../testing/studio.js';
 import type { Finding } from '../types.js';
-import { R4_ID } from './r4.js';
+import { scanUser } from '../userScan.js';
+import { checkR4, R4_ID } from './r4.js';
 
 const SYSTEM = [{ name: 'Generic PLA @BBL X2D', compatible_printers: [] }];
 const INFO = sidecar('GFSL99_18');
@@ -79,6 +80,23 @@ describe('R4 malformed presets', () => {
     expect(f?.explanation).toContain(reason);
   });
 
+  it('reports a child of the old name field as hidden, as Studio names presets by file', async () => {
+    // Studio knows the parent only as "test" (Preset.cpp:1455@v02.09.01.70), so "Kid" is hidden.
+    const fs = fakeStudio(SYSTEM, [
+      { file: 'test', name: 'Old name', inherits: 'Generic PLA @BBL X2D', info: INFO },
+      { name: 'Kid', inherits: 'Old name', info: INFO },
+    ]);
+    const r = await scan(fs);
+    expect(r.presets.find((p) => p.fileStem === 'Kid')?.status).toBe('hidden');
+    const r1 = r.findings.find((f) => f.ruleId !== R4_ID && f.presetName === 'Kid');
+    expect(r1?.explanation).toContain(
+      'Your preset file "test.json" has "Old name" as its name inside, but Studio knows a ' +
+        'preset of yours only by its file name, "test".',
+    );
+    const f = r.findings.find((x) => x.ruleId === R4_ID && x.presetPath.endsWith('/test.json'));
+    expect(f?.explanation).toContain('so that preset is hidden. Fix it first');
+  });
+
   it('does not rename onto a system preset name', async () => {
     const fs = fakeStudio(SYSTEM, [
       { file: 'Generic PLA @BBL X2D', name: 'Mine', inherits: 'Generic PLA @BBL X2D', info: INFO },
@@ -137,20 +155,22 @@ describe('R4 malformed presets', () => {
     ]);
   });
 
-  it('does not rename a preset that R1 suggests as the new parent of an orphan', async () => {
-    const fs = fakeStudio(
-      [{ name: 'Generic PLA @BBL X1C', compatible_printers: ['Bambu Lab X1 Carbon 0.4 nozzle'] }],
-      [
-        {
-          file: 'My PLA @BBL X1C (2)',
-          name: 'My PLA @BBL X1C',
-          inherits: 'Generic PLA @BBL X1C',
-          info: INFO,
-        },
-        { name: 'Child', inherits: 'My PLA @BBL X1C 0.4 nozzle', info: INFO },
-      ],
-    );
-    const f = (await r4(fs)).find((x) => x.presetName === 'My PLA @BBL X1C');
+  it('does not rename a preset that is a suggested new parent of an orphan', async () => {
+    // R1 itself no longer suggests such a preset (its name and file differ, so Studio knows it by
+    // the file name), but the guard stays for any caller that passes suggestedParents.
+    const fs = fakeStudio(SYSTEM, [
+      {
+        file: 'My PLA @BBL X1C (2)',
+        name: 'My PLA @BBL X1C',
+        inherits: 'Generic PLA @BBL X2D',
+        info: INFO,
+      },
+    ]);
+    const presets = await scanUser(fs, '1000000001');
+    const f = checkR4(presets[0]!, {
+      presets,
+      suggestedParents: new Map([['My PLA @BBL X1C', 'Child']]),
+    }).find((x) => x.presetName === 'My PLA @BBL X1C');
     expect(f).toMatchObject({ severity: 'warning', title: "Name doesn't match the file name" });
     expect(f?.proposedFix).toBeUndefined();
     expect(f?.explanation).toContain('it is a suggested new parent for your preset "Child"');

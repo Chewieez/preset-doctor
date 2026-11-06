@@ -444,6 +444,12 @@ select {
   border-color: var(--warn-border);
 }
 
+.banner.info {
+  background: var(--info-bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
 .banner.success {
   background: var(--ok-bg);
   color: var(--ok-fg);

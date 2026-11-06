@@ -4,6 +4,12 @@
  * In Bambu Studio a user preset may inherit from a system preset or from another user preset
  * of the same account (including wizard presets in filament/base/). System presets only ever
  * inherit from other system presets.
+ *
+ * Studio knows a user preset only by its file name without ".json", never by the "name" inside
+ * the file (PresetCollection::load_presets, src/libslic3r/Preset.cpp:1455, 1464, 1516@v02.09.01.70),
+ * so user parents are looked up by file name. Not modelled yet: Studio loads filament/base/ first
+ * and adds each pass only after it ends (Preset.cpp:1425-1427, 1598), so a base/ preset can only
+ * have a system parent and a top-level preset can't have a top-level parent (SPEC section 10).
  */
 import type { UserPreset } from './types.js';
 
@@ -23,7 +29,7 @@ export interface SystemLookup {
 
 export interface ResolveContext {
   system: SystemLookup;
-  /** User presets of the scanned account, keyed by name (see buildUserIndex). */
+  /** User presets of the scanned account, keyed by file name (see buildUserIndex). */
   userByName: ReadonlyMap<string, UserPreset>;
 }
 
@@ -35,16 +41,13 @@ export type ResolvedPreset =
 const MAX_CHAIN_DEPTH = 64;
 
 /**
- * Indexes user presets by their `name` field, and also by file name when that differs, so a
- * preset with a name/file mismatch (R4) does not also make its children look orphaned. The
- * first preset wins on duplicates; top-level presets come before base/ ones from scanUser.
+ * Indexes user presets by file name (without .json), the only name Studio knows them by (see
+ * the module comment). A child that inherits a preset's `name` field when that differs from its
+ * file name is therefore orphaned, as in Studio; R1 and R4 explain the mismatch. The first preset
+ * wins on duplicates; top-level presets come before base/ ones from scanUser.
  */
 export function buildUserIndex(presets: readonly UserPreset[]): Map<string, UserPreset> {
   const byName = new Map<string, UserPreset>();
-  for (const p of presets) {
-    const name = presetName(p);
-    if (name !== undefined && !byName.has(name)) byName.set(name, p);
-  }
   for (const p of presets) if (!byName.has(p.fileStem)) byName.set(p.fileStem, p);
   return byName;
 }
@@ -94,7 +97,8 @@ export interface Chain {
 export function chain(preset: UserPreset, ctx: ResolveContext): Chain {
   const startName = presetName(preset) ?? preset.fileStem;
   const links: ResolvedPreset[] = [];
-  const seen = new Set<string>([startName]);
+  // Studio's own name for the preset is its file name (see buildUserIndex).
+  const seen = new Set<string>([preset.fileStem]);
   let parent = userInherits(preset);
   let child = startName;
   // Once the walk reaches a system preset it stays there: system presets never inherit user ones.

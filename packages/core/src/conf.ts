@@ -7,7 +7,7 @@ export const STUDIO_CONF_PATH = 'BambuStudio.conf';
 export interface StudioConf {
   /** False when the file does not exist. */
   found: boolean;
-  /** app.sync_user_preset: when true, the cloud copy of presets may overwrite local repairs. */
+  /** app.sync_user_preset: Studio's cloud preset sync (SPEC section 10, question 3). */
   syncUserPreset?: boolean;
   /** Why the file could not be read or parsed, if so. The values above may still be filled in. */
   error?: string;

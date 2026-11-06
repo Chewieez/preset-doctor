@@ -24,8 +24,7 @@ export function WebGuide({ busy, onPick }: Props) {
       <ol className="steps">
         <li>
           <strong>Close Bambu Studio, and keep it closed</strong> until you've copied the repaired
-          files back (step 4). Also turn off preset sync or log out of Studio, or the cloud copy of
-          a preset may undo the repair.
+          files back (step 4).
         </li>
         <li>
           <strong>Copy three things into a new folder, right before repairing.</strong> An older

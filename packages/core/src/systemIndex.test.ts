@@ -288,7 +288,45 @@ describe('loadSystemIndex edge cases', () => {
     expect(index.warnings).toEqual([
       expect.stringMatching(/"Bad" could not be read/),
       expect.stringMatching(/"Arr" is not a JSON object/),
-      expect.stringMatching(/named "Other" but listed as "Named"/),
+      expect.stringMatching(
+        /named "Other" but listed as "Named"; Studio uses the name in the file/,
+      ),
+    ]);
+  });
+
+  it('finds presets by the name in their file, as Studio does', async () => {
+    // Profile 02.00.00.83 lists "SUNLU PETG @BBL A1M" for a file named "... 0.4 nozzle".
+    const fs = countingFs(
+      memFs({
+        'system/BBL.json': bbl([
+          { name: 'Foo @BBL A1M', sub_path: 'filament/Foo @BBL A1M.json' },
+          { name: 'Foo @BBL A1M 0.2 nozzle', sub_path: 'filament/Foo @BBL A1M 0.2 nozzle.json' },
+          { name: 'Bar @BBL A1M', sub_path: 'filament/Bar @BBL A1M.json' },
+          { name: 'Unread @BBL A1M', sub_path: 'filament/Unread @BBL A1M.json' },
+        ]),
+        'system/BBL/filament/Foo @BBL A1M.json': preset({ name: 'Foo @BBL A1M 0.4 nozzle' }),
+        'system/BBL/filament/Foo @BBL A1M 0.2 nozzle.json': preset({
+          name: 'Foo @BBL A1M 0.2 nozzle',
+        }),
+        'system/BBL/filament/Bar @BBL A1M.json': preset({}),
+        'system/BBL/filament/Unread @BBL A1M.json': '{ "name": ',
+      }),
+    );
+    const index = await loadSystemIndex(fs);
+    const found = async (name: string) => (await index.findByStudioName(name))?.name ?? null;
+    expect(await found('Foo @BBL A1M 0.4 nozzle')).toBe('Foo @BBL A1M');
+    expect(await found('Foo @BBL A1M')).toBeNull();
+    expect(await found('Foo @BBL A1M 0.2 nozzle')).toBe('Foo @BBL A1M 0.2 nozzle');
+    // No name in the file: Studio's name is the index name. Unreadable: never "missing".
+    expect(await found('Bar @BBL A1M')).toBe('Bar @BBL A1M');
+    expect(await found('Unread @BBL A1M')).toBe('Unread @BBL A1M');
+    expect(await found('Nothing @BBL A1M')).toBeNull();
+    expect(await found('Unread @BBL A1M 0.6 nozzle')).toBe('Unread @BBL A1M');
+    expect(await found('')).toBeNull();
+    expect((await index.load('Foo @BBL A1M'))?.studioName).toBe('Foo @BBL A1M 0.4 nozzle');
+    // Only same-stem files were read.
+    expect(fs.reads.filter((p) => p.includes('Bar'))).toEqual([
+      'system/BBL/filament/Bar @BBL A1M.json',
     ]);
   });
 

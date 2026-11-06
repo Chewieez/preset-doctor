@@ -132,17 +132,34 @@ describe('resolveParent', () => {
     expect(resolveParent('Mine', ctx)).toEqual({ kind: 'user', name: 'Mine', preset: user });
   });
 
-  it('finds a user preset by file name when its name field differs (R4)', () => {
+  // Studio names a user preset after its file only (Preset.cpp:1455@v02.09.01.70).
+  it('finds a user preset by file name only, not by a differing name field (R4)', () => {
     const odd = userPreset('test', { name: 'test.json' });
     const ctx = ctxOf([], [odd]);
     expect(resolveParent('test', ctx)?.kind).toBe('user');
-    expect(resolveParent('test.json', ctx)?.kind).toBe('user');
+    expect(resolveParent('test.json', ctx)).toBeNull();
   });
 
-  it('prefers the name field over another preset file name', () => {
+  it('keys by file name, even when another preset has that name field', () => {
     const a = userPreset('A', { name: 'B' });
     const b = userPreset('B', { name: 'Other' });
-    expect(buildUserIndex([a, b]).get('B')).toBe(a);
+    const index = buildUserIndex([a, b]);
+    expect(index.get('B')).toBe(b);
+    expect(index.get('Other')).toBeUndefined();
+    expect([...index.keys()]).toEqual(['A', 'B']);
+  });
+
+  it('reports a child of a name field that differs from the file name as orphaned', () => {
+    const parent = userPreset('Parent file', { name: 'Parent', inherits: 'Sys' });
+    const child = userPreset('Child', { name: 'Child', inherits: 'Parent' });
+    const c = chain(child, ctxOf([sys], [parent, child]));
+    expect(c.end).toEqual({ kind: 'missing', name: 'Parent', referencedBy: 'Child' });
+  });
+
+  it('does not call a preset a loop when it inherits its own name field from a system preset', () => {
+    // File "Mine", name "Sys", inherits "Sys": Studio finds the system preset (no loop).
+    const odd = userPreset('Mine', { name: 'Sys', inherits: 'Sys' });
+    expect(chain(odd, ctxOf([sys], [odd])).end).toEqual({ kind: 'root' });
   });
 });
 

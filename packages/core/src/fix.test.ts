@@ -119,15 +119,22 @@ describe('planFixes', () => {
     const parentPath = 'user/1000000001/filament/My PLA @BBL X1C (2).json';
     const childPath = 'user/1000000001/filament/Child.json';
     const r = await scan(fs);
-    // The default repair re-parents Child and leaves its new parent's name alone...
-    expect(defaultChoices(r)).toEqual([
-      { presetPath: childPath, candidateName: 'My PLA @BBL X1C' },
-    ]);
-    await applyChanges(fs, await planFixes(fs, r, defaultChoices(r)));
-    const after = await scan(fs);
-    expect(after.presets.filter((p) => p.status === 'hidden')).toEqual([]);
-
-    // ...and a hand-made selection that does both is refused.
+    // R1 doesn't offer a top-level preset whose name and file differ (Studio couldn't use it as a
+    // parent), so offer it by hand to check the guard behind that.
+    const child = r.findings.find((f) => f.ruleId === R1_ID && f.presetPath === childPath)!;
+    expect(child.proposedFix).toBeUndefined();
+    child.proposedFix = {
+      kind: 'setInherits',
+      candidates: [
+        {
+          name: 'My PLA @BBL X1C',
+          confidence: 'high',
+          reason: '',
+          preselected: true,
+          source: 'user',
+        },
+      ],
+    };
     await expect(
       planFixes(fs, r, [
         { presetPath: childPath, candidateName: 'My PLA @BBL X1C' },
@@ -231,6 +238,45 @@ describe('planFixes', () => {
       'Its sync file (.info) is not valid UTF-8 text, so its base_id is left as it is.',
     );
     expect(Array.from(await fs.readBytes(infoPath))).toEqual(Array.from(bytes));
+  });
+
+  it('never makes base_id equal to setting_id, which Studio treats as a broken sidecar', async () => {
+    // Preset.cpp:1563 and GUI_App.cpp:6914-6917@v02.09.01.70 clear setting_id when the two match.
+    const fs = fakeStudio(
+      [
+        {
+          name: 'Generic PLA @BBL X2D',
+          compatible_printers: ['Bambu Lab X2D 0.6 nozzle'],
+          setting_id: 'GSAME',
+        },
+      ],
+      [{ name: 'Odd', inherits: 'Generic PLA @BBL X2D 0.6 nozzle', info: sidecar('OLD', 'GSAME') }],
+    );
+    const r = await scan(fs);
+    const changes = await planFixes(fs, r, defaultChoices(r));
+    expect(changes.map((c) => c.path)).toEqual(['user/1000000001/filament/Odd.json']);
+    expect(changes[0]?.description).toContain("setting_id is already the new parent's id");
+  });
+
+  it('changes only base_id in a sidecar, never sync_info or updated_time, and keeps "version"', async () => {
+    // Studio drops a user preset without "version" (Preset.cpp:1491-1492@v02.09.01.70); a new
+    // updated_time or sync_info would change how cloud sync treats it (SPEC section 10, question 3).
+    const fs = fakeStudio(
+      [
+        {
+          name: 'Generic PLA @BBL X2D',
+          compatible_printers: ['Bambu Lab X2D 0.6 nozzle'],
+          setting_id: 'GNEW',
+        },
+      ],
+      [{ name: 'Mine', inherits: 'Generic PLA @BBL X2D 0.6 nozzle', info: sidecar('OLD') }],
+    );
+    const r = await scan(fs);
+    const changes = await planFixes(fs, r, defaultChoices(r));
+    const info = changes.find((c) => c.path.endsWith('.info'))!;
+    expect(info.after).toBe(info.before.replace('base_id = OLD', 'base_id = GNEW'));
+    const json = JSON.parse(changes.find((c) => c.path.endsWith('.json'))!.after);
+    expect(json).toMatchObject({ inherits: 'Generic PLA @BBL X2D', version: '2.8.0.6' });
   });
 
   it('accepts any listed candidate, and combines edits to one file', async () => {

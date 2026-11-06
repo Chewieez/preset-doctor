@@ -135,7 +135,7 @@ export class BrowserDoctor implements PresetDoctorApi {
       if (!(await fs.exists(STUDIO_CONF_PATH))) {
         result.warnings.push(
           `${STUDIO_CONF_PATH} wasn't copied, so Preset Doctor can't tell whether preset sync ` +
-            'is on. If it is, turn it off or log out of Studio before copying the files back.',
+            'is on. If it is, a repair stays on this computer until you save the preset in Studio.',
         );
       }
       this.lastScan = { folder, result };

@@ -271,7 +271,7 @@ export function App() {
         </div>
       )}
       {cloud && (
-        <div className="banner warning" role="alert" data-testid="cloud-banner">
+        <div className="banner info" role="note" data-testid="cloud-banner">
           <span>
             <strong>{cloud.title}.</strong> {cloud.explanation}
           </span>

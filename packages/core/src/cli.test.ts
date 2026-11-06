@@ -103,7 +103,7 @@ describe('preset-doctor CLI', () => {
     expect(r.code).toBe(EXIT.problems);
     expect(r.out).toContain('System presets: version 02.08.00.06');
     expect(r.out).toContain('Account: 1000000001 (24 presets)');
-    expect(r.out).toContain('WARNING: Cloud preset sync is on.');
+    expect(r.out).toContain('Note: Cloud preset sync is on.');
     expect(r.out).toContain('Hidden in Studio (22)');
     expect(r.out).toContain('Parent "Generic PETG @BBL X2D 0.6 nozzle" is missing');
     expect(r.out).toContain('fix: switch parent to "Generic PETG @BBL X2D" (high confidence)');

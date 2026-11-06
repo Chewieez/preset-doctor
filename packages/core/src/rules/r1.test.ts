@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { PresetFs } from '../fs.js';
+import { memFs } from '../memFs.js';
 import { scan } from '../scan.js';
 import { defaultPaths } from '../node/studioProcess.js';
 import { loadSystemCopy, simulateR1 } from '../testing/r1Simulation.js';
-import { fakeStudio, sidecar, type FakeSystemPreset } from '../testing/studio.js';
+import {
+  fakeStudio,
+  sidecar,
+  type FakeSystemPreset,
+  type FakeUserPreset,
+} from '../testing/studio.js';
 import type { Candidate, Finding } from '../types.js';
 import { R1_ID } from './r1.js';
 
@@ -236,6 +242,64 @@ describe('R1 candidate ranking', () => {
     expect(candidates((await r1(fs))[0])).toHaveLength(10);
   });
 
+  // Bambu's history (docs/r1-history.md): "Bambu PLA Wood @BBL P1S 0.4 nozzle" was dropped and
+  // "Bambu PLA Wood @BBL X1C" lists the P1S 0.4 nozzle instead.
+  const P1S = (n: string) => `Bambu Lab P1S ${n} nozzle`;
+  const X1C = (n: string) => `Bambu Lab X1 Carbon ${n} nozzle`;
+  const WOOD: FakeSystemPreset[] = [
+    { name: 'Wood @BBL X1C', compatible_printers: [X1C('0.4'), P1S('0.4')], setting_id: 'W1' },
+    { name: 'Wood @BBL X1C 0.6 nozzle', compatible_printers: [X1C('0.6')], setting_id: 'W2' },
+    { name: 'Wood @BBL P1S 0.6 nozzle', compatible_printers: [P1S('0.6')], setting_id: 'W3' },
+  ];
+
+  it("pre-selects another printer's preset that lists the target printer and nozzle", async () => {
+    const fs = fakeStudio(WOOD, [{ name: 'Mine', inherits: 'Wood @BBL P1S 0.4 nozzle' }]);
+    const [f] = await r1(fs);
+    expect(summary(candidates(f))).toEqual([
+      'high* Wood @BBL X1C',
+      'medium Wood @BBL P1S 0.6 nozzle',
+      'low Wood @BBL X1C 0.6 nozzle',
+    ]);
+    expect(candidates(f)[0]?.reason).toBe(
+      "Bambu's current preset for the Bambu Lab P1S with a 0.4 mm nozzle. Its name is for the " +
+        'X1C, but it lists yours.',
+    );
+    expect(f?.explanation).toContain(
+      'The closest match is "Wood @BBL X1C", which Bambu now uses for the Bambu Lab P1S with the ' +
+        '0.4 mm nozzle, although its name is for another printer.',
+    );
+  });
+
+  it("keeps another printer's preset low when it does not list the target nozzle", async () => {
+    const fs = fakeStudio(WOOD, [{ name: 'Mine', inherits: 'Wood @BBL P1S 0.8 nozzle' }]);
+    const cs = candidates((await r1(fs))[0]);
+    expect(cs.filter((c) => c.confidence === 'high')).toEqual([]);
+    expect(cs.some((c) => c.preselected)).toBe(false);
+  });
+
+  it("pre-selects nothing when another printer's preset and the printer's own both fit", async () => {
+    const fs = fakeStudio(
+      [...WOOD, { name: 'Wood @BBL P1S', compatible_printers: [P1S('0.4')], setting_id: 'W4' }],
+      [{ name: 'Mine', inherits: 'Wood @BBL P1S 0.4 nozzle' }],
+    );
+    const cs = candidates((await r1(fs))[0]);
+    expect(summary(cs).slice(0, 2)).toEqual(['high Wood @BBL P1S', 'high Wood @BBL X1C']);
+  });
+
+  it('never lets the low-candidate cap drop a preset that lists the target', async () => {
+    // Fifteen other printers sort before "X1C"; the one that lists the P1S is still offered.
+    const system: FakeSystemPreset[] = [
+      ...Array.from({ length: 15 }, (_, i) => ({
+        name: `Wood @BBL A${String(i).padStart(2, '0')}`,
+        compatible_printers: [`Bambu Lab A${i} 0.4 nozzle`],
+      })),
+      ...WOOD,
+    ];
+    const fs = fakeStudio(system, [{ name: 'Mine', inherits: 'Wood @BBL P1S 0.4 nozzle' }]);
+    const cs = candidates((await r1(fs))[0]);
+    expect(cs[0]).toMatchObject({ name: 'Wood @BBL X1C', confidence: 'high', preselected: true });
+  });
+
   it('reports no fix when nothing has the same filament stem', async () => {
     const fs = fakeStudio(PETG, [{ name: 'Mine', inherits: 'Unobtainium @BBL X2D 0.4 nozzle' }]);
     const [f] = await r1(fs);
@@ -251,12 +315,16 @@ describe('R1 candidate ranking', () => {
     expect(candidates((await r1(fs))[0])).toEqual([]);
   });
 
-  it("suggests the user's own presets, without a setting id", async () => {
+  it("suggests the user's own filament/base/ presets, without a setting id", async () => {
     const fs = fakeStudio(
       [{ name: 'Generic PLA @BBL X2D 0.4 nozzle', compatible_printers: [X2D('0.4')] }],
       [
-        { name: 'My PLA @BBL X2D 0.4 nozzle', inherits: 'Generic PLA @BBL X2D 0.4 nozzle' },
-        { name: 'Broken parent @BBL X2D', file: 'Orphan', inherits: 'Gone' },
+        {
+          name: 'My PLA @BBL X2D 0.4 nozzle',
+          inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+          base: true,
+        },
+        { name: 'Broken parent @BBL X2D', file: 'Orphan', inherits: 'Gone', base: true },
         { name: 'Child', inherits: 'My PLA @BBL X2D' },
       ],
     );
@@ -265,8 +333,135 @@ describe('R1 candidate ranking', () => {
     expect(summary(cs)).toEqual(['high* My PLA @BBL X2D 0.4 nozzle']);
     expect(cs[0]).toMatchObject({ source: 'user' });
     expect(cs[0]?.settingId).toBeUndefined();
-    expect(cs[0]?.reason).toContain('one of your own presets');
-    expect(child?.explanation).toContain('your own preset "My PLA @BBL X2D 0.4 nozzle"');
+    // One voice: "your own preset", never "Bambu's current preset ... (one of your own presets)".
+    expect(cs[0]?.reason).toBe('Your own preset for the Bambu Lab X2D with a 0.4 mm nozzle.');
+    expect(child?.explanation).toContain(
+      'The closest match is your own preset "My PLA @BBL X2D 0.4 nozzle", which is for the 0.4 mm nozzle.',
+    );
+  });
+
+  it("words another printer's user preset as the user's own, not Bambu's", async () => {
+    const fs = fakeStudio(
+      [{ name: 'Wood @BBL P1S 0.6 nozzle', compatible_printers: [P1S('0.6')], setting_id: 'W3' }],
+      [
+        {
+          name: 'Wood @BBL X1C',
+          inherits: 'Wood @BBL P1S 0.6 nozzle',
+          base: true,
+          extra: { compatible_printers: [P1S('0.4')] },
+        },
+        { name: 'Mine', inherits: 'Wood @BBL P1S 0.4 nozzle' },
+      ],
+    );
+    const f = (await r1(fs)).find((x) => x.presetName === 'Mine');
+    const [top] = candidates(f);
+    expect(top).toMatchObject({ name: 'Wood @BBL X1C', source: 'user', preselected: true });
+    expect(top?.reason).toBe(
+      'Your own preset for the Bambu Lab P1S with a 0.4 mm nozzle. Its name is for the X1C, but ' +
+        'it lists yours.',
+    );
+    expect(f?.explanation).toContain(
+      'The closest match is your own preset "Wood @BBL X1C", which is for the Bambu Lab P1S with ' +
+        'the 0.4 mm nozzle, although its name is for another printer.',
+    );
+  });
+});
+
+describe('R1 user-preset candidates follow how Studio loads them', () => {
+  // Studio loads filament/base/ first, then every top-level preset in one pass, so a top-level
+  // preset's parent can only be a system or base/ preset, a base/ preset's only a system one,
+  // and a user preset's name is its file name (Preset.cpp:1425, 1455, 1516, 1598@v02.09.01.70).
+  const SYSTEM: FakeSystemPreset[] = [
+    { name: 'Generic PLA @BBL X2D 0.4 nozzle', compatible_printers: [X2D('0.4')] },
+  ];
+  const parent = (extra: Partial<FakeUserPreset>): FakeUserPreset => ({
+    name: 'My PLA @BBL X2D 0.4 nozzle',
+    inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+    ...extra,
+  });
+  const childCandidates = async (user: FakeUserPreset[]) =>
+    summary(candidates((await r1(fakeStudio(SYSTEM, user))).find((f) => f.presetName === 'Child')));
+
+  it('never offers a top-level preset', async () => {
+    expect(
+      await childCandidates([parent({}), { name: 'Child', inherits: 'My PLA @BBL X2D' }]),
+    ).toEqual([]);
+  });
+
+  it('never offers a preset whose file name differs from its name', async () => {
+    const user = [
+      parent({ base: true, file: 'My PLA @BBL X2D 0.4 nozzle (1)' }),
+      { name: 'Child', inherits: 'My PLA @BBL X2D' },
+    ];
+    expect(await childCandidates(user)).toEqual([]);
+  });
+
+  it('never offers a base/ preset with a user parent', async () => {
+    const user = [
+      { name: 'My Root', base: true },
+      parent({ base: true, inherits: 'My Root' }),
+      { name: 'Child', inherits: 'My PLA @BBL X2D' },
+    ];
+    expect(await childCandidates(user)).toEqual([]);
+  });
+
+  it('offers no user preset to an orphan in base/', async () => {
+    const user = [
+      parent({ base: true }),
+      { name: 'Child', inherits: 'My PLA @BBL X2D', base: true },
+    ];
+    expect(await childCandidates(user)).toEqual([]);
+  });
+});
+
+describe('R1 uses the names Studio gives system presets', () => {
+  // Studio names a system preset by the "name" in its file, not by BBL.json's entry
+  // (PresetBundle.cpp:6631@v02.09.01.70); in profile 02.00.00.83 the two differ.
+  const files = (): Record<string, string> => ({
+    'system/BBL.json': JSON.stringify({
+      version: '02.00.00.83',
+      filament_list: [
+        { name: 'SUNLU PETG @BBL A1M', sub_path: 'filament/SUNLU PETG @BBL A1M.json' },
+        {
+          name: 'SUNLU PETG @BBL A1M 0.2 nozzle',
+          sub_path: 'filament/SUNLU PETG @BBL A1M 0.2 nozzle.json',
+        },
+      ],
+    }),
+    'system/BBL/filament/SUNLU PETG @BBL A1M.json': JSON.stringify({
+      name: 'SUNLU PETG @BBL A1M 0.4 nozzle',
+      inherits: '',
+      instantiation: 'true',
+      setting_id: 'S04',
+      compatible_printers: ['Bambu Lab A1 mini 0.4 nozzle'],
+    }),
+    'system/BBL/filament/SUNLU PETG @BBL A1M 0.2 nozzle.json': JSON.stringify({
+      name: 'SUNLU PETG @BBL A1M 0.2 nozzle',
+      inherits: '',
+      instantiation: 'true',
+      setting_id: 'S02',
+      compatible_printers: ['Bambu Lab A1 mini 0.2 nozzle'],
+    }),
+  });
+  const user = (inherits: string): Record<string, string> => ({
+    'user/1000000001/filament/Mine.json': JSON.stringify({
+      name: 'Mine',
+      from: 'User',
+      inherits,
+      version: '2.0.0.0',
+    }),
+  });
+
+  it('does not report a preset whose parent is named in the file but not in the index', async () => {
+    const r = await scan(memFs({ ...files(), ...user('SUNLU PETG @BBL A1M 0.4 nozzle') }));
+    expect(r.findings.filter((f) => f.ruleId === R1_ID)).toEqual([]);
+    expect(r.presets[0]?.status).not.toBe('hidden');
+  });
+
+  it("reports a parent only the index names, and offers the file's name", async () => {
+    const [f] = await r1(memFs({ ...files(), ...user('SUNLU PETG @BBL A1M') }));
+    expect(summary(candidates(f))[0]).toBe('high* SUNLU PETG @BBL A1M 0.4 nozzle');
+    expect(candidates(f)[0]).toMatchObject({ settingId: 'S04', source: 'system' });
   });
 });
 

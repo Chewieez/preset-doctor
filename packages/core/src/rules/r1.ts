@@ -9,8 +9,12 @@
  *           "<model> <size> nozzle" for every target size; or, when compatibility is unknown,
  *           the " 0.4 nozzle" toggle of the missing name when that fits the target; or a
  *           capitalization-only difference.
+ *           Another printer's preset counts too when its compatible_printers covers the target
+ *           the same way: Bambu has folded a printer's own presets into another printer's
+ *           ("Bambu PLA Wood @BBL P1S 0.4 nozzle" into "... @BBL X1C", which lists the P1S 0.4
+ *           nozzle; docs/r1-history.md).
  *   medium  same stem and printer, other or uncertain nozzle.
- *   low     same stem, other printer. Never pre-selected.
+ *   low     same stem, other printer, not covering the target. Never pre-selected.
  * A single high candidate is pre-selected. With several, the one the orphan's `.info` base_id
  * names is pre-selected; with none of them named, nothing is.
  *
@@ -27,6 +31,12 @@
  * built on; `node scripts/r1-simulate.ts` prints the count), so it only breaks ties between
  * high candidates and, when the target size is a guess (family/default), puts the preset it
  * names first among medium ones.
+ *
+ * Names are the ones Studio uses: a system preset's is the "name" in its file (see
+ * systemIndex.ts). A user preset is only offered when it is in filament/base/, has a system parent
+ * or none, and its file name is its name: Studio loads top-level user presets in one pass, so one
+ * can't be another's parent, and names a user preset after its file (PresetCollection::load_presets,
+ * src/libslic3r/Preset.cpp:1425-1427, 1455, 1516, 1528-1531, 1598@v02.09.01.70, 56a57d00).
  */
 import { getInfoValue, INFO_KEYS } from '../infoFile.js';
 import {
@@ -138,12 +148,25 @@ async function orphanFinding(
     presetName: name,
     status: 'hidden',
     title: 'Parent preset is missing',
-    explanation: explain(target, ranked, ctx.system.version),
+    explanation: explain(target, ranked, ctx.system.version) + nameFieldNote(missing, ctx),
   };
   if (ranked.length > 0) {
     finding.proposedFix = { kind: 'setInherits', candidates: ranked.map((r) => r.candidate) };
   }
   return finding;
+}
+
+/**
+ * When the missing name is the `name` inside one of the user's own files, say why that doesn't
+ * count: Studio knows a user preset only by its file name (see resolve.ts).
+ */
+function nameFieldNote(missing: string, ctx: RuleContext): string {
+  const p = ctx.presets.find((x) => x.fileStem !== missing && presetName(x) === missing);
+  if (!p) return '';
+  return (
+    ` Your preset file "${p.fileStem}.json" has "${missing}" as its name inside, but Studio ` +
+    `knows a preset of yours only by its file name, "${p.fileStem}".`
+  );
 }
 
 /** Where the target nozzle sizes came from; see the module comment. */
@@ -217,7 +240,10 @@ async function nameNozzles(c: Pooled, target: Target, ctx: RuleContext): Promise
 }
 
 interface Pooled {
+  /** The name Studio knows it by, i.e. what goes into `inherits`. */
   name: string;
+  /** System presets: the index name, which SystemIndex methods take. */
+  key?: string;
   source: 'system' | 'user';
   parsed: ParsedPresetName;
   preset?: UserPreset;
@@ -225,8 +251,11 @@ interface Pooled {
 
 interface Ranked {
   candidate: Candidate;
-  /** How a high candidate was found; drives the explanation wording. */
-  via: 'compat' | 'name' | 'other';
+  /**
+   * How a high candidate was found; drives the explanation wording. 'otherPrinter': by
+   * compatible_printers, on a preset named for another printer.
+   */
+  via: 'compat' | 'otherPrinter' | 'name' | 'other';
   sortKey: number;
   /** Its setting_id is the orphan's base_id. */
   fromBaseId: boolean;
@@ -249,7 +278,7 @@ async function rankCandidates(
     const mine = c.source === 'user' ? ' (one of your own presets)' : '';
     // base_id in a sidecar refers to system presets; leave it alone for user parents.
     const settingId =
-      c.source === 'system' ? (await ctx.system.load(c.name))?.settingId : undefined;
+      c.source === 'system' ? (await ctx.system.load(c.key ?? c.name))?.settingId : undefined;
     const fromBaseId = target.baseId !== undefined && settingId === target.baseId;
     const push = (
       confidence: Confidence,
@@ -260,7 +289,8 @@ async function rankCandidates(
       const candidate: Candidate = {
         name: c.name,
         confidence,
-        reason: reason + mine,
+        // coverReason already says whose preset it is.
+        reason: via === 'compat' || via === 'otherPrinter' ? reason : reason + mine,
         preselected: false,
         source: c.source,
       };
@@ -273,6 +303,16 @@ async function rankCandidates(
       continue;
     }
     if (!target.parsed || !(await samePrinter(target, c.parsed, ctx))) {
+      // Another printer's preset that lists the target printer and nozzle is as good as one
+      // with the target's printer code: Bambu folds printers' presets together.
+      const compat = target.parsed && target.model !== null ? await effectiveCompat(c, ctx) : null;
+      if (target.model !== null && compat && compat.length > 0) {
+        if (fitsTarget(nozzlesFor(compat, target.model), target)) {
+          const reason = `${coverReason(target, c.source)} Its name is for the ${printerLabel(c.parsed)}, but it lists yours.`;
+          push('high', fromBaseId ? `${reason} ${BASE_ID_NOTE}` : reason, 'otherPrinter');
+          continue;
+        }
+      }
       const own = c.parsed.nozzle ?? DEFAULT_NOZZLE;
       const nozzleMatch = target.nozzles.some((t) => sameNozzle(own, t)) ? 0 : 1;
       push(
@@ -289,9 +329,7 @@ async function rankCandidates(
     if (target.model !== null && known) {
       const nozzles = nozzlesFor(known, target.model);
       if (fitsTarget(nozzles, target)) {
-        const reason = nozzleUnsure(target)
-          ? `Bambu's current preset for the ${target.model}, for every nozzle that name could mean (${joinList(target.nozzles, 'and')} mm).`
-          : `Bambu's current preset for the ${target.model} with a ${joinList(target.nozzles)} mm nozzle.`;
+        const reason = coverReason(target, c.source);
         push('high', fromBaseId ? `${reason} ${BASE_ID_NOTE}` : reason, 'compat');
       } else if (
         nozzles.length > 0 &&
@@ -352,6 +390,14 @@ async function rankCandidates(
   return out;
 }
 
+/** Why a candidate whose compatible_printers covers the target is a good match. */
+function coverReason(target: Target, source: Candidate['source']): string {
+  const whose = source === 'user' ? 'Your own preset' : "Bambu's current preset";
+  return nozzleUnsure(target)
+    ? `${whose} for the ${target.model}, for every nozzle that name could mean (${joinList(target.nozzles, 'and')} mm).`
+    : `${whose} for the ${target.model} with a ${joinList(target.nozzles)} mm nozzle.`;
+}
+
 /** The single high candidate, or among several the one the orphan's base_id names. */
 function preselection(ranked: Ranked[]): Ranked | undefined {
   const high = ranked.filter((r) => r.candidate.confidence === 'high');
@@ -377,23 +423,35 @@ async function candidatePool(
   const systemNames = target.parsed
     ? ctx.system.namesWithStem(target.parsed.stem)
     : ctx.system.names().filter((n) => n.toLowerCase() === stem);
-  for (const name of systemNames) {
-    const parsed = ctx.system.parsed(name) ?? { stem: name };
+  const seen = new Set<string>();
+  for (const key of systemNames) {
     // Studio only lets presets inherit from instantiable ones; skip building blocks.
-    const body = await ctx.system.load(name);
+    const body = await ctx.system.load(key);
     if (body && !body.instantiation) continue;
-    pool.push({ name, source: 'system', parsed });
+    const name = body?.studioName ?? key;
+    // Two files with the same name: Studio refuses to load the whole vendor profile
+    // ("duplicated defines", src/libslic3r/PresetBundle.cpp:6539-6544, 6921-6927@v02.09.01.70).
+    // Keep the first one, defensively.
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const parsed =
+      name === key
+        ? (ctx.system.parsed(key) ?? { stem: key })
+        : (parsePresetName(name) ?? { stem: name });
+    pool.push({ name, key, source: 'system', parsed });
   }
 
-  const seen = new Set(pool.map((p) => p.name));
+  // Studio only finds a parent for a filament/base/ preset among system presets.
+  if (orphan.isBase) return pool;
   for (const p of ctx.presets) {
-    if (p === orphan || !p.json) continue;
+    if (p === orphan || !p.json || !p.isBase) continue;
     const name = presetName(p);
-    if (name === undefined || seen.has(name)) continue;
+    if (name === undefined || name !== p.fileStem || seen.has(name)) continue;
     const parsed = parsePresetName(name);
     if (!parsed || parsed.stem.toLowerCase() !== stem) continue;
-    // A preset that is itself orphaned (or loops) would not bring this one back.
-    if (chain(p, ctx.resolve).end.kind !== 'root') continue;
+    // A preset that is itself orphaned (or loops, or has a user parent) would not bring this one back.
+    const up = chain(p, ctx.resolve);
+    if (up.end.kind !== 'root' || up.links.some((l) => l.kind === 'user')) continue;
     seen.add(name);
     pool.push({ name, source: 'user', parsed, preset: p });
   }
@@ -420,12 +478,14 @@ async function samePrinter(
 
 /** compatible_printers as Studio resolves it, through user and system parents. */
 async function effectiveCompat(c: Pooled, ctx: RuleContext): Promise<readonly string[] | null> {
-  if (c.source === 'system' || !c.preset) return ctx.system.effectiveCompatiblePrinters(c.name);
+  if (c.source === 'system' || !c.preset) {
+    return ctx.system.effectiveCompatiblePrinters(c.key ?? c.name);
+  }
   const own = ownCompat(c.preset.json);
   if (own) return own;
   // The resolver's system side only knows names, so hand system links to the index.
   for (const link of chain(c.preset, ctx.resolve).links) {
-    if (link.kind === 'system') return ctx.system.effectiveCompatiblePrinters(link.name);
+    if (link.kind === 'system') return ctx.system.effectiveCompatiblePrinters(link.entry.name);
     const v = ownCompat(link.preset.json);
     if (v) return v;
   }
@@ -456,12 +516,17 @@ function explain(target: Target, ranked: Ranked[], version: string | null): stri
 
   if (high.length === 1) {
     const best = high[0]!;
+    const nozzles = nozzleUnsure(target)
+      ? `all of the ${joinList(target.nozzles, 'and')} mm nozzles`
+      : `the ${joinList(target.nozzles)} mm nozzle`;
+    // "Bambu now uses" fits only Bambu's own presets; a user preset is just "for" them.
+    const uses = best.candidate.source === 'user' ? 'is for' : 'Bambu now uses for';
     const why =
-      best.via !== 'compat'
-        ? ', which looks like the same preset under its current name'
-        : nozzleUnsure(target)
-          ? `, which Bambu now uses for all of the ${joinList(target.nozzles, 'and')} mm nozzles`
-          : `, which Bambu now uses for the ${joinList(target.nozzles)} mm nozzle`;
+      best.via === 'otherPrinter'
+        ? `, which ${uses} the ${target.model ?? 'printer'} with ${nozzles}, although its name is for another printer`
+        : best.via !== 'compat'
+          ? ', which looks like the same preset under its current name'
+          : `, which ${uses} ${nozzles}`;
     return `${intro} The closest match is ${quote(best)}${why}.`;
   }
   if (high.length > 1) {

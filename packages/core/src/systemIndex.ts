@@ -4,6 +4,13 @@
  * Names come straight from the index, so "does this parent exist?" needs no file reads. Preset
  * bodies (setting_id, inherits, compatible_printers) are read lazily and cached, because R1 only
  * needs a handful of siblings per orphan; loadAll() is there for callers that want everything.
+ *
+ * Studio itself names a system preset by the "name" inside its file, not by the index entry
+ * (`preset_name = key_values[BBL_JSON_KEY_NAME]` in PresetBundle::load_vendor_configs_from_json,
+ * src/libslic3r/PresetBundle.cpp:6631@v02.09.01.70 (56a57d00), :3924@v02.00.02.57). The two only
+ * differ in a few old profiles (02.00.00.83 lists "SUNLU PETG @BBL A1M" for a file whose name is
+ * "SUNLU PETG @BBL A1M 0.4 nozzle"), so names stay keyed by the index and findByStudioName()
+ * gives the answer Studio would, reading only the files it needs.
  */
 import { dirname, errorMessage, isNotFound, joinPath, type PresetFs } from './fs.js';
 import { isRecord, stripBom } from './jsonFile.js';
@@ -33,6 +40,11 @@ export interface SystemEntry {
 
 /** The parts of a system preset body the rules need. */
 export interface SystemPreset extends SystemEntry {
+  /**
+   * The name Studio knows this preset by: the "name" inside its file, or the index name when the
+   * file has none. Almost always the same as `name` (the index name).
+   */
+  studioName: string;
   settingId?: string;
   /** Empty string means "no parent". */
   inherits: string;
@@ -71,6 +83,15 @@ export interface SystemIndex {
   /** Reads and caches one body; null (plus a warning) if absent, unreadable or not JSON. */
   load(name: string): Promise<SystemPreset | null>;
   loadAll(): Promise<SystemPreset[]>;
+  /**
+   * The entry of the preset Studio knows by `name` (see the module comment), or null when Studio
+   * knows none. Reads the listed file; for a name that is not listed, or whose file carries another
+   * name, the files listed under the same stem. A file that can't be read counts as a match: the
+   * listed one when it is unreadable, else the first unreadable same-stem file when no readable
+   * one carries the name. So a read error never turns an existing parent into a missing one
+   * (Studio can't load such a profile either; the read error is in `warnings`).
+   */
+  findByStudioName(name: string): Promise<SystemEntry | null>;
   /**
    * compatible_printers from the nearest preset in the chain that sets it. An empty array is a
    * real value (fdm_filament_common sets []). null when no preset in the chain sets it.
@@ -157,6 +178,29 @@ export async function loadSystemIndex(
     return p;
   };
 
+  const findByStudioName = async (name: string): Promise<SystemEntry | null> => {
+    if (name === '') return null;
+    const listed = entries.get(name);
+    if (listed) {
+      const body = await load(name);
+      if (!body || body.studioName === name) return listed;
+    }
+    const stem = parsePresetName(name)?.stem;
+    if (stem === undefined) return null;
+    // In index order, as Studio loads them. Two files with the same name make Studio refuse the
+    // whole vendor profile ("duplicated defines", PresetBundle.cpp:6539-6544, 6921-6927); the
+    // first one is kept here, defensively.
+    let unreadable: SystemEntry | undefined;
+    for (const other of namesWithStem(stem)) {
+      if (other === name) continue;
+      const body = await load(other);
+      if (body?.studioName === name) return entries.get(other) ?? null;
+      if (!body) unreadable ??= entries.get(other);
+    }
+    // That file may be the one carrying `name`: don't call the parent missing on a guess.
+    return unreadable ?? null;
+  };
+
   const cycleWarned = new Set<string>();
   /** Walks up from `name` until `stop` returns true, the chain ends, or it loops. */
   const walk = async (
@@ -231,6 +275,7 @@ export async function loadSystemIndex(
       (await mapLimit([...entries.keys()], LOAD_CONCURRENCY, load)).filter(
         (p): p is SystemPreset => p !== null,
       ),
+    findByStudioName,
     effectiveCompatiblePrinters,
     printerModel,
     modelOf,
@@ -335,13 +380,16 @@ async function readBody(
     warnings.push(`System preset "${entry.name}" is not a JSON object.`);
     return null;
   }
+  const fileName = str(json['name']);
   if (json['name'] !== undefined && json['name'] !== entry.name) {
     warnings.push(
-      `System preset file ${entry.path} is named "${String(json['name'])}" but listed as "${entry.name}".`,
+      `System preset file ${entry.path} is named "${String(json['name'])}" but listed as ` +
+        `"${entry.name}"; Studio uses the name in the file.`,
     );
   }
   const preset: SystemPreset = {
     ...entry,
+    studioName: fileName !== undefined && fileName !== '' ? fileName : entry.name,
     inherits: str(json['inherits']) ?? '',
     instantiation: json['instantiation'] === 'true' || json['instantiation'] === true,
   };
@@ -480,9 +528,32 @@ function combineIndexes(parts: SystemIndex[], loadWarnings: string[]): SystemInd
       const lists = await Promise.all(parts.map((p) => p.loadAll()));
       return lists.flatMap((list, i) => list.filter((b) => owner(b.name) === parts[i]));
     },
+    findByStudioName: (name) => firstNonNull((p) => p.findByStudioName(name)),
     effectiveCompatiblePrinters: (name) =>
       owner(name)?.effectiveCompatiblePrinters(name) ?? Promise.resolve(null),
     printerModel: (tag, code) => firstNonNull((p) => p.printerModel(tag, code)),
     modelOf: (pn) => firstNonNull((p) => p.modelOf(pn)),
+  };
+}
+
+/**
+ * A system lookup for resolve.ts that answers with Studio's names (see findByStudioName) for
+ * every parent these presets name. Other names fall back to the index names.
+ */
+export async function studioNameLookup(
+  system: SystemIndex,
+  presets: readonly { json?: Record<string, unknown> }[],
+): Promise<{ get(name: string): SystemEntry | undefined }> {
+  const known = new Map<string, SystemEntry | null>();
+  for (const p of presets) {
+    const inherits = p.json?.['inherits'];
+    if (typeof inherits !== 'string' || inherits === '' || known.has(inherits)) continue;
+    known.set(inherits, await system.findByStudioName(inherits));
+  }
+  return {
+    get: (name) => {
+      const hit = known.get(name);
+      return hit === undefined ? system.get(name) : (hit ?? undefined);
+    },
   };
 }

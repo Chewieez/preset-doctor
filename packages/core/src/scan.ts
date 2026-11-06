@@ -9,7 +9,12 @@ import { buildUserIndex, userInherits } from './resolve.js';
 import type { RuleContext } from './rules/context.js';
 import { checkR1, displayName, R1_ID, userCandidateNames } from './rules/r1.js';
 import { checkR4 } from './rules/r4.js';
-import { loadSystemIndexes, SystemIndexError, type SystemIndex } from './systemIndex.js';
+import {
+  loadSystemIndexes,
+  studioNameLookup,
+  SystemIndexError,
+  type SystemIndex,
+} from './systemIndex.js';
 import {
   RULE_IDS,
   type Finding,
@@ -75,13 +80,21 @@ export async function scan(fs: PresetFs, options: ScanOptions = {}): Promise<Sca
   else if (conf.error !== undefined && conf.syncUserPreset === undefined) {
     // Sync may well be on: say so, rather than staying as quiet as when it is off.
     warnings.push(
-      `${conf.error} Preset Doctor could not tell whether cloud preset sync is on; turn it off ` +
-        'in Bambu Studio before repairing.',
+      `${conf.error} Preset Doctor could not tell whether cloud preset sync is on. If it is, a ` +
+        'repair stays on this computer until you save the preset in Bambu Studio.',
     );
   }
 
+  // Parents are resolved by the names Studio itself uses (see studioNameLookup).
   const ctx: RuleContext | null = system
-    ? { system, presets, resolve: { system, userByName: buildUserIndex(presets) } }
+    ? {
+        system,
+        presets,
+        resolve: {
+          system: await studioNameLookup(system, presets),
+          userByName: buildUserIndex(presets),
+        },
+      }
     : null;
 
   // R1 runs first, so R4 won't rename a preset that R1 suggests as someone's new parent.
@@ -121,16 +134,28 @@ export async function scan(fs: PresetFs, options: ScanOptions = {}): Promise<Sca
   };
 }
 
+export const CLOUD_SYNC_EXPLANATION =
+  "Turning it off shouldn't be needed: the cloud copy of a hidden preset names the same missing " +
+  'parent, so Studio skips it instead of putting the old version back. The repair usually ' +
+  "isn't uploaded on its own, though (Studio uploads it by itself only if the preset was never " +
+  'synced or still had changes waiting to sync). To get it onto your other computers, open ' +
+  'each repaired preset in Bambu Studio and save it.';
+
 function cloudSyncFinding(): Finding {
   return {
     ruleId: R5_ID,
-    severity: 'warning',
+    // A note, not a warning: nothing is wrong, and the text says turning sync off isn't needed.
+    severity: 'info',
     presetPath: STUDIO_CONF_PATH,
     status: 'info',
     title: 'Cloud preset sync is on',
-    explanation:
-      'Turn off preset sync or log out of Bambu Studio before repairing, or the cloud copy may ' +
-      'undo the fix.',
+    // Bambu Studio's source, v02.09.01.70 (SPEC section 10, question 3): a cloud copy whose
+    // parent is missing is skipped like the local one (src/libslic3r/Preset.cpp:2112-2124), and
+    // a preset with no sidecar, or a sidecar that has a setting_id and an empty sync_info, is
+    // not uploaded (get_user_presets, Preset.cpp:1922-1926); saving the preset in Studio flags it
+    // (src/slic3r/GUI/Tab.cpp:7733-7743). A sidecar with base_id but no setting_id yet, or a
+    // pending sync_info, is uploaded on its own (src/slic3r/GUI/GUI_App.cpp:6849-6877).
+    explanation: CLOUD_SYNC_EXPLANATION,
   };
 }
 

@@ -142,7 +142,12 @@ function renameBlocker(
   if (other) return `another of your presets is already called "${newName}".`;
   const child = ctx.presets.find((p) => p !== preset && userInherits(p) === oldName);
   if (child) {
-    return `your preset "${presetName(child) ?? child.fileStem}" is based on "${oldName}" and would lose its parent.`;
+    // Studio knows this preset only by its file name, so that child is already hidden (R1).
+    return (
+      `your preset "${presetName(child) ?? child.fileStem}" is based on "${oldName}", and Studio ` +
+      `knows this preset only by its file name, so that preset is hidden. Fix it first (see its ` +
+      `own entry), then rename this one.`
+    );
   }
   const orphan = ctx.suggestedParents?.get(oldName);
   if (orphan !== undefined) {
