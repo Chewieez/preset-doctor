@@ -1151,13 +1151,28 @@ one entry, so 46 "Unsupported" rows buried the 18 hidden presets the user has to
 **The change.**
 
 - `customFilamentAlias` (`compat.ts`) mirrors the alias rule. `markFamilyCopies` groups the
-  judged presets by alias, in file name order (upper-cased, as Windows lists a folder), and leaves
-  out a preset that would hold a printer an earlier member holds (Studio gives it no alias). In
-  OrcaSlicer 2.4+ such a preset would be grouped; here it keeps its own row (one row more, never
-  one less).
-- A group with a member whose verdict is `selected`, `all` or `other-printer` (best first; a
-  process mismatch doesn't matter) has a **usable copy**. Each member with an R2/R3 verdict gets
-  `CompatDetail.family = { alias, copy, copyState, copyPrinters? }`.
+  judged presets by alias and leaves out a preset that would hold a printer an earlier preset
+  with that alias holds (Studio gives it no alias). It takes the presets in Studio's load order
+  (`studioLoadOrder`): `base/` first (`:1424-1426`), then the type's folder, each in file name
+  order (the whole file name, upper-cased, as NTFS lists a folder). Every loaded custom filament
+  holds printers, shown or not (`:1568`), so filaments with `"instantiation": "false"` hold them
+  too without being members. In OrcaSlicer 2.4+ a left-out preset would be grouped; here it keeps
+  its own row (one row more).
+- **Caveat: folder order.** `directory_iterator` order is the file system's. On Windows (NTFS)
+  it is the name order above, so on Windows data the grouping matches Studio. On macOS (APFS) or
+  Linux the order isn't sorted, and Preset Doctor can't know it, so when two copies with one
+  alias list the same printer, which of them Studio gives the alias can differ from here (rare:
+  "Create filament" copies list one printer each).
+- A group with a member whose verdict is `selected`, `all` or `other-printer` has a **usable
+  copy**: a copy without a process mismatch first, then in that order. A copy that is only for
+  other process presets (`process: 'mismatch'`) is under "Unsupported presets" too until one of
+  those is selected (`is_compatible_with_print`, `:3114`), so it is used only when no copy fits,
+  with `copyProcess: 'mismatch'`. Each member with a verdict of `printer-not-added`,
+  `nozzle-not-added` or `unknown-printers` gets
+  `CompatDetail.family = { alias, copy, copyState, copyPrinters?, copyProcess?, copyListed? }`
+  (`copyListed`: the copy's "name" when it differs from its file name, which is the name Studio
+  uses, `:1455`). A `printer-hidden` member keeps its row: repairing that printer preset is
+  something to do. (`other-vendor` can't happen: a custom filament has no vendor.)
 - Such a member's finding keeps its R2/R3 rule id but is a note (`status: 'info'`), so the row is
   "OK, with notes", not needing attention. It goes first among the row's findings, so it is the
   row's reason over an R4 note. Title: "A copy for a printer you haven't added" (R3: "A copy for a
@@ -1166,16 +1181,24 @@ one entry, so 46 "Unsupported" rows buried the 18 hidden presets the user has to
   added, so it only adds a greyed-out "<alias>" under "Unsupported presets". <source> The copy
   "<copy>" is offered for the printer selected now, so "<alias>" in the list is that copy. Nothing
   to do." (for `other-printer`: "... is offered for <printers>, which you've added; when you
-  select it, ..."). Reason: `Copy of "<alias>": <the R2/R3 reason>`.
+  select it, ..."; with `copyProcess`: "..., but only with other process presets than the
+  selected one; when you select one of those, ..."). Reason: `Shown in Studio as "<alias>";
+  <the R2/R3 reason>`.
 - One scan-level note, `R2_FAMILY_COPIES` (`presetPath` the conf, `info`), titled "Copies of
   presets you already use on your printers": "N filament presets are copies of your custom
   filament presets, made for printers or nozzles you haven't added; each group also has a copy
   for a printer you've added (G groups: <up to 3 aliases>). <Studio> lists each group under one
-  name, the part before "@": the copy for the printer you select under "User presets", and the
-  copies for printers you haven't added only add that name, greyed out, under "Unsupported
-  presets". Nothing to do." With OrcaSlicer's group hidden, the end says they don't show unless
-  the developer setting is on.
-- A member without a usable copy stays `unsupported`; processes never have an alias.
+  name, the part before "@": the copy for the printer you select under "User presets", and all
+  the other copies together add that name once more, greyed out, under "Unsupported presets".
+  Nothing to do." (That one entry also stands for copies for other added printers and copies
+  for other processes.) With OrcaSlicer's group hidden, the end says the other copies don't show
+  unless the developer setting is on.
+- A member without a usable copy (or a `printer-hidden` one) stays `unsupported`, with
+  `CompatDetail.shownAs = { alias, others }` (`others`: the family's other members with an R2/R3
+  verdict). Its text adds "In the list, <Studio> shows it as "<alias>", the part of its name
+  before "@"" and, with `others`, "; that one greyed-out entry also stands for your other
+  copies "<alias> @…" that aren't offered for your printers either", and its reason starts with
+  `Shown in Studio as "<alias>";`. Processes never have an alias.
 - **UI.** The note is a second banner under the printers line with its own "Show them" (search
   text `compat:copies`: the rows with `compat.family`). **CLI.** It is printed as `Note: ...`
   when filament presets are shown. The fixture gets two copies of "My PETG" (X2D, selected; H2D,

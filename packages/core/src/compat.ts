@@ -461,6 +461,25 @@ function isUsable(
   return detail.state in USABLE_RANK;
 }
 
+/**
+ * The verdicts a family copy can have: made for printers or nozzles that aren't added. A copy for
+ * one of the account's printer presets that can't load keeps its own row, since repairing that
+ * printer is something to do. ('other-vendor' can't happen here: a custom filament has no parent,
+ * so no vendor.)
+ */
+function isFoldable(detail: CompatDetail): boolean {
+  return (
+    detail.state === 'printer-not-added' ||
+    detail.state === 'nozzle-not-added' ||
+    detail.state === 'unknown-printers'
+  );
+}
+
+/** A copy whose process mismatch keeps it out of the list ranks after one without. */
+function usableRank(detail: CompatDetail & { state: CompatFamily['copyState'] }): number {
+  return (detail.process === 'mismatch' ? 10 : 0) + USABLE_RANK[detail.state];
+}
+
 /** File name order, as Windows lists a folder (upper-cased, then by code unit). */
 function byFileName(a: string, b: string): number {
   const x = a.toUpperCase();
@@ -468,29 +487,62 @@ function byFileName(a: string, b: string): number {
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
+/** The file name with its extension: Windows sorts "A B.json" before "A.json". */
+function fileName(p: UserPreset): string {
+  return p.path.slice(p.path.lastIndexOf('/') + 1);
+}
+
 /**
- * Marks the R2/R3 verdicts of custom filament copies whose family (one alias) has a copy offered
- * for an added printer: `detail.family` names that copy. Only presets with a verdict take part
- * (the loaded ones).
+ * The order Studio loads one type's user presets in: the base/ folder first
+ * (src/libslic3r/Preset.cpp:1424-1426@v02.09.01.70), then the type's folder, each in folder
+ * order (:1449), here file name order as on Windows (NTFS).
+ */
+export function studioLoadOrder(a: UserPreset, b: UserPreset): number {
+  if (a.isBase !== b.isBase) return a.isBase ? -1 : 1;
+  return byFileName(fileName(a), fileName(b));
+}
+
+/** A loaded custom filament that takes part in the alias check but isn't judged. */
+export interface AliasHolder {
+  preset: UserPreset;
+  /** Its compatible_printers after the name rule. */
+  printers: readonly string[];
+}
+
+/**
+ * Marks the R2/R3 verdicts of custom filaments the slicer lists under their alias. A copy whose
+ * family (one alias) has another copy offered for an added printer gets `detail.family`, naming
+ * that copy; any other such verdict gets `detail.shownAs`. Members are the presets with a
+ * verdict (the ones the slicer shows).
  *
  * Studio doesn't give the alias to a preset when another preset with that alias already holds
  * one of the printers in its list (is_alias_exist, Preset.cpp:2975-2995; set_printer_hold_alias,
  * :3493-3531); such a preset keeps its full name and its own row, so it isn't part of the
- * family. Presets are taken in file name order, the order Studio meets them in the folder
- * (:1449). OrcaSlicer 2.4+ drops that check (Preset.cpp:4481-4507@v2.5.0); there such a preset
- * keeps its own row here, which only shows one row more.
+ * family. Every loaded custom filament holds printers, shown or not (:1568), so `holders` adds
+ * the loaded ones without a verdict ("instantiation": "false"). Presets are taken in Studio's
+ * load order (studioLoadOrder). OrcaSlicer 2.4+ drops the check (Preset.cpp:4481-4507@v2.5.0);
+ * there such a preset keeps its own row here, which only shows one row more.
  */
-export function markFamilyCopies(details: ReadonlyMap<UserPreset, CompatDetail>): void {
+export function markFamilyCopies(
+  details: ReadonlyMap<UserPreset, CompatDetail>,
+  holders: readonly AliasHolder[] = [],
+  listedName: (p: UserPreset) => string = (p) => p.fileStem,
+): void {
+  const loaded: { preset: UserPreset; printers: readonly string[]; detail?: CompatDetail }[] = [
+    ...[...details].map(([preset, detail]) => ({ preset, printers: detail.printers, detail })),
+    ...holders.filter((h) => !details.has(h.preset)),
+  ];
+  loaded.sort((a, b) => studioLoadOrder(a.preset, b.preset));
   const families = new Map<string, { preset: UserPreset; detail: CompatDetail }[]>();
   const held = new Map<string, Set<string>>();
-  const ordered = [...details].sort(([a], [b]) => byFileName(a.fileStem, b.fileStem));
-  for (const [preset, detail] of ordered) {
+  for (const { preset, printers: list, detail } of loaded) {
     const alias = customFilamentAlias(preset);
     if (alias === null) continue;
     const printers = held.get(alias) ?? new Set<string>();
-    if (detail.printers.some((p) => printers.has(p))) continue;
-    for (const p of detail.printers) printers.add(p);
+    if (list.some((p) => printers.has(p))) continue;
+    for (const p of list) printers.add(p);
     held.set(alias, printers);
+    if (!detail) continue;
     const members = families.get(alias) ?? [];
     members.push({ preset, detail });
     families.set(alias, members);
@@ -499,14 +551,20 @@ export function markFamilyCopies(details: ReadonlyMap<UserPreset, CompatDetail>)
     const usable = members
       .map((m) => m.detail)
       .filter(isUsable)
-      .sort((a, b) => USABLE_RANK[a.state] - USABLE_RANK[b.state])[0];
-    if (!usable) continue;
-    const copy = members.find((m) => m.detail === usable)!.preset.fileStem;
-    for (const { detail } of members) {
-      if (!isUnsupported(detail)) continue;
-      const family: CompatFamily = { alias, copy, copyState: usable.state };
+      .sort((a, b) => usableRank(a) - usableRank(b))[0];
+    const unsupported = members.filter((m) => isUnsupported(m.detail));
+    for (const { detail } of unsupported) {
+      if (!usable || !isFoldable(detail)) {
+        detail.shownAs = { alias, others: unsupported.length - 1 };
+        continue;
+      }
+      const copy = members.find((m) => m.detail === usable)!.preset;
+      const family: CompatFamily = { alias, copy: copy.fileStem, copyState: usable.state };
       if (usable.state === 'other-printer')
         family.copyPrinters = [...(usable.matchedPrinters ?? [])];
+      if (usable.process === 'mismatch') family.copyProcess = 'mismatch';
+      const listed = listedName(copy);
+      if (listed !== copy.fileStem) family.copyListed = listed;
       detail.family = family;
     }
   }

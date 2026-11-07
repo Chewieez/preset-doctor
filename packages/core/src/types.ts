@@ -240,6 +240,19 @@ export interface CompatDetail {
    * the R2_FAMILY_COPIES note, and its own finding is a note ('info'), not 'unsupported'.
    */
   family?: CompatFamily;
+  /**
+   * An R2/R3 verdict of a custom filament that the slicer lists under its alias (the part of its
+   * name before "@"), but that isn't a family copy (no other copy is offered for an added
+   * printer, or it is for a printer preset of the account's that can't load).
+   */
+  shownAs?: CompatAlias;
+}
+
+/** A custom filament the slicer lists under its alias; see CompatDetail.shownAs. */
+export interface CompatAlias {
+  alias: string;
+  /** Other copies with that alias that aren't offered for an added printer either: they share its one greyed-out entry. */
+  others: number;
 }
 
 /**
@@ -256,6 +269,10 @@ export interface CompatFamily {
   copyState: 'selected' | 'all' | 'other-printer';
   /** 'other-printer': the added printers that copy is for. */
   copyPrinters?: string[];
+  /** That copy is only for other process presets than the selected one (is_compatible_with_print). */
+  copyProcess?: 'mismatch';
+  /** That copy's name as Preset Doctor lists it (its "name"), when it differs from its file name. */
+  copyListed?: string;
 }
 
 export interface CompatContext {

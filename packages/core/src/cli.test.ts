@@ -421,8 +421,8 @@ describe('preset-doctor CLI with printer checks (R2/R3)', () => {
     expect(r.out).toContain("Made for the 0.8 mm nozzle, which you haven't added");
     expect(r.out).toContain('Note: Copies of presets you already use on your printers.');
     expect(r.out).toContain(
-      'My PETG @Bambu Lab H2D 0.4 nozzle [base]  Copy of "My PETG": only for printers you ' +
-        "haven't added (Bambu Lab H2D 0.4 nozzle)",
+      'My PETG @Bambu Lab H2D 0.4 nozzle [base]  Shown in Studio as "My PETG"; only for ' +
+        "printers you haven't added (Bambu Lab H2D 0.4 nozzle)",
     );
     expect(r.out).toContain('Summary: 0 hidden, 0 broken, 4 unsupported, 1 OK with notes, 7 OK.');
     expect(r.out).not.toContain('To preview repairs');

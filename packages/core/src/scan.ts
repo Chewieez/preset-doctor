@@ -5,9 +5,11 @@
  */
 import {
   compatSetup,
+  customFilamentAlias,
   effectiveCompat,
   judgeCompat,
   markFamilyCopies,
+  type AliasHolder,
   type CompatInputs,
 } from './compat.js';
 import { readSlicerConf, type SlicerConf } from './conf.js';
@@ -301,11 +303,20 @@ async function compatPass(args: {
   if (!inputs) return { context: setup.context, details, notes: [] };
 
   const items: OtherSelectionItem[] = [];
+  // Custom filaments Studio loads but never shows still hold printers for their alias.
+  const holders: AliasHolder[] = [];
   for (const preset of presets) {
-    if (preset.type === 'machine' || !shown(preset)) continue;
+    if (preset.type === 'machine') continue;
     const system = indexes.byType[preset.type];
     const resolve = resolves.get(preset.type);
     if (!system || !resolve) continue;
+    if (!shown(preset)) {
+      if (preset.json !== undefined && !blocked.has(preset) && customFilamentAlias(preset)) {
+        const eff = await effectiveCompat(preset, system, resolve);
+        if (eff) holders.push({ preset, printers: eff.printers ?? [] });
+      }
+      continue;
+    }
     const { links } = chain(preset, resolve);
     if (links.some((l) => l.kind === 'user' && !shown(l.preset))) continue;
     const eff = await effectiveCompat(preset, system, resolve);
@@ -323,7 +334,7 @@ async function compatPass(args: {
   const note = notForSelectionFinding(items, { otherNozzle: otherNozzle(items, inputs) }, profile);
   // Copies of a custom filament whose family has a copy for an added printer: one name in the
   // slicer, so they go in their own grouped note instead of being reported as unsupported.
-  markFamilyCopies(details);
+  markFamilyCopies(details, holders, displayName);
   const copies = presets.flatMap((p) => {
     const family = details.get(p)?.family;
     return family ? [{ name: displayName(p), family }] : [];

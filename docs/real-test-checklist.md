@@ -137,6 +137,9 @@ nozzle change Studio's own settings: undo them in Studio afterwards.
    Unsupported. If it marks none (copies of a filament you created for several printers are in
    the copies note instead, see step 5), skip this step.
    - **Predicted:** it is greyed out under "Unsupported presets", on every printer you've added.
+     Look for the name Preset Doctor gives in its details: a filament you created
+     (`<name> @<printer>`) is listed as `<name>` only (the part before "@"), and copies of it
+     that aren't offered for your printers share that one greyed-out entry.
    - Then add the printer it is made for in Studio. Note the exact menu wording you used (Preset
      Doctor says "printer selection"). **Predicted:** the preset shows normally once that printer
      is selected. Remove the printer again afterwards.
@@ -154,8 +157,8 @@ nozzle change Studio's own settings: undo them in Studio afterwards.
    several printers (`<name> @<printer>`). In Studio, select the printer whose copy Preset Doctor
    names in that preset's details, and open the filament dropdown.
    - **Predicted:** `<name>` (the part before "@") is listed once under "User presets" (the copy
-     for that printer), and once more, greyed out, under "Unsupported presets" (all the copies for
-     printers you haven't added together). No copy shows its full `<name> @<printer>` name.
+     for that printer), and once more, greyed out, under "Unsupported presets" (all the other
+     copies together). No copy shows its full `<name> @<printer>` name.
 
 ## 6. OrcaSlicer (optional, about 15 minutes)
 

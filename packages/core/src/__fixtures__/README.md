@@ -217,7 +217,7 @@ compatibility keys below added as their own settings:
 | filament/Unknown Printer.json | inherits `Generic PLA @BBL X2D 0.4 nozzle`, own `compatible_printers: ["Bambu Lab Q9 0.4 nozzle"]` | R2 `unknown-printers`, `guessed` |
 | filament/Condition Only.json | inherits `Generic PLA @BBL X2D 0.4 nozzle`, own `compatible_printers: []`, own `compatible_printers_condition: "nozzle_diameter[0]==0.4"` | `cant-tell` (condition), no finding |
 | filament/Other Process.json | inherits `Generic PLA @BBL X2D 0.4 nozzle`, own `compatible_prints: ["0.12mm Fine @BBL X2D"]` | `selected` with `process: 'mismatch'`, counted in the note |
-| filament/base/My PLA @Bambu Lab H2D 0.4 nozzle.json | no `inherits`, own `compatible_printers: []` | the name rule gives `Bambu Lab H2D 0.4 nozzle`, so R2 `printer-not-added` |
+| filament/base/My PLA @Bambu Lab H2D 0.4 nozzle.json | no `inherits`, own `compatible_printers: []` | the name rule gives `Bambu Lab H2D 0.4 nozzle`, so R2 `printer-not-added`; no other copy of "My PLA", so `shownAs: { alias: "My PLA", others: 0 }` (Studio lists it as "My PLA") |
 | filament/base/My PETG @Bambu Lab X2D 0.4 nozzle.json | no `inherits`, own `compatible_printers: ["Bambu Lab X2D 0.4 nozzle"]` | `selected`, no finding; the copy of "My PETG" for the added printer |
 | filament/base/My PETG @Bambu Lab H2D 0.4 nozzle.json | no `inherits`, own `compatible_printers: ["Bambu Lab H2D 0.4 nozzle"]` | R2 `printer-not-added` with `family` (copy `My PETG @Bambu Lab X2D 0.4 nozzle`): an info note, counted in the copies note |
 | machine/My X2D.json | inherits `Bambu Lab X2D 0.4 nozzle` | ok; printers are never judged, and this one counts as added |

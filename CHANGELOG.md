@@ -13,7 +13,8 @@ before it is tagged.
   "Unsupported presets". When a group has a copy for a printer you've added, its other copies
   are now "OK, with notes" (the details name the copy in use) and summed up in a new note,
   "Copies of presets you already use on your printers" ("Show them" lists them), instead of
-  needing attention. A copy with no such sibling is still Unsupported. On a real folder this
+  needing attention. A copy with no such sibling is still Unsupported, and its details and
+  table reason give the short name Studio lists it under. On a real folder this
   took 46 Unsupported filaments (13 groups) down to none, so the hidden presets come first.
 - **Cloud sync note is calmer and more precise.** Bambu Studio's source shows a cloud copy that
   still names the missing parent is skipped, so it can't undo a repair, and turning sync off

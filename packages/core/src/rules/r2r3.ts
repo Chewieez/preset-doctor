@@ -20,6 +20,7 @@ import type { SlicerProfile } from '../slicer.js';
 import { TERMS } from '../terms.js';
 import {
   RULE_IDS,
+  type CompatAlias,
   type CompatContext,
   type CompatDetail,
   type CompatFamily,
@@ -67,6 +68,21 @@ function sourceText(detail: CompatDetail, profile: SlicerProfile): string {
   }
 }
 
+/**
+ * Where to find a custom filament the slicer lists under its alias: the list shows that name,
+ * not the file name, and the incompatible copies of one alias make one entry
+ * (src/slic3r/GUI/PresetComboBoxes.cpp:1586-1589, 1717-1729@v02.09.01.70).
+ */
+function aliasText(shownAs: CompatAlias, profile: SlicerProfile): string {
+  const { alias, others } = shownAs;
+  const shared =
+    others === 0
+      ? ''
+      : `; that one greyed-out entry also stands for your ${others === 1 ? 'other copy' : `${others} other copies`} ` +
+        `"${alias} @…" that ${others === 1 ? "isn't" : "aren't"} offered for your printers either`;
+  return `In the list, ${profile.shortName} shows it as "${alias}", the part of its name before "@"${shared}.`;
+}
+
 /** "0.6 mm" / "0.6 or 0.8 mm" */
 function sizes(nozzles: readonly string[], conjunction: 'or' | 'and'): string {
   return `${joinList(nozzles, conjunction)} mm`;
@@ -87,7 +103,10 @@ export function compatFinding(
   if (detail.family) return familyCopyFinding(args, detail.family, profile);
   const studio = profile.displayName;
   const short = profile.shortName;
-  const intro = `${studio} loads this ${TERMS[type].noun}, but ${where(type, profile, args.context)}.`;
+  const intro = join(
+    `${studio} loads this ${TERMS[type].noun}, but ${where(type, profile, args.context)}.`,
+    detail.shownAs ? aliasText(detail.shownAs, profile) : '',
+  );
   const source = sourceText(detail, profile);
   const base = {
     presetPath: args.path,
@@ -237,18 +256,8 @@ function familyCopyFinding(
       title = "A copy for printers you haven't added";
       what = `lists printer names ${short} doesn't know (${shortList(quoted(detail.printers), NAMES_SHOWN)})`;
       break;
-    case 'printer-hidden': {
-      const names = detail.hiddenPrinters ?? [];
-      title = "A copy for a printer you haven't added";
-      what =
-        `is made for your printer preset${names.length === 1 ? '' : 's'} ` +
-        `${shortList(quoted(names), NAMES_SHOWN)}, which ${short} can't load right now`;
-      break;
-    }
-    case 'other-vendor':
-      title = "A copy for printers you haven't added";
-      what = `is based on ${detail.vendor ?? 'another vendor'}'s presets, which none of your printers uses`;
-      break;
+    // Not family copies (markFamilyCopies): 'printer-hidden' keeps its row, and a custom
+    // filament has no vendor, so never 'other-vendor'.
     default:
       return null;
   }
@@ -259,14 +268,24 @@ function familyCopyFinding(
       : `it only adds a greyed-out "${family.alias}" under "Unsupported presets"`;
   const listed = `"${family.alias}" in the list is that copy`;
   const copyPrinters = family.copyPrinters ?? [];
-  const copyFor =
+  const forPrinter =
     family.copyState === 'selected'
-      ? `is offered for the printer selected now, so ${listed}`
+      ? 'is offered for the printer selected now'
       : family.copyState === 'all'
-        ? `is offered for every printer, so ${listed}`
-        : `is offered for ${shortList(copyPrinters, NAMES_SHOWN)}, which you've added; when you ` +
-          `select ${copyPrinters.length === 1 ? 'it' : 'one of them'}, ${listed}`;
-  const hiddenPrinters = detail.hiddenPrinters ?? [];
+        ? 'is offered for every printer'
+        : `is offered for ${shortList(copyPrinters, NAMES_SHOWN)}, which you've added`;
+  // A copy only for other process presets is under "Unsupported presets" too until one of
+  // those is selected (is_compatible_with_print, src/libslic3r/Preset.cpp:784-804, 3112@v02.09.01.70).
+  const copyFor =
+    family.copyProcess === 'mismatch'
+      ? `${forPrinter}, but only with other process presets than the selected one; when you ` +
+        `select one of those, ${listed}`
+      : family.copyState === 'other-printer'
+        ? `${forPrinter}; when you select ${copyPrinters.length === 1 ? 'it' : 'one of them'}, ${listed}`
+        : `${forPrinter}, so ${listed}`;
+  const copyName = family.copyListed
+    ? `"${family.copy}" (listed here as "${family.copyListed}")`
+    : `"${family.copy}"`;
   return {
     presetPath: args.path,
     presetName: args.name,
@@ -280,12 +299,8 @@ function familyCopyFinding(
       `${studio} lists your custom filament presets "${family.alias} @…" under one name, ` +
         `"${family.alias}". This copy ${what}, so ${shown}.`,
       sourceText(detail, profile),
-      `The copy "${family.copy}" ${copyFor}.`,
-      detail.state !== 'printer-hidden'
-        ? 'Nothing to do.'
-        : hiddenPrinters.length === 1
-          ? 'If you repair that printer preset, this copy is offered for it again.'
-          : 'If you repair those printer presets, this copy is offered for them again.',
+      `The copy ${copyName} ${copyFor}.`,
+      'Nothing to do.',
     ),
   };
 }
@@ -293,8 +308,10 @@ function familyCopyFinding(
 /** One line for the table, per docs/design-v0.2.md section 5.4. */
 export function compatReason(detail: CompatDetail, profile: SlicerProfile): string | undefined {
   const reason = verdictReason(detail, profile);
-  if (reason === undefined || !detail.family) return reason;
-  return `Copy of "${detail.family.alias}": ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`;
+  const alias = detail.family?.alias ?? detail.shownAs?.alias;
+  if (reason === undefined || alias === undefined) return reason;
+  // The table shows the file's name; the slicer's list shows the alias.
+  return `Shown in ${profile.shortName} as "${alias}"; ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`;
 }
 
 function verdictReason(detail: CompatDetail, profile: SlicerProfile): string | undefined {
@@ -404,12 +421,13 @@ export function familyCopiesFinding(
   const aliases = [...new Set(items.map((i) => i.family.alias))];
   const groups = aliases.length;
   const one = n === 1;
+  // The greyed-out entry stands for every copy that isn't offered now, these and any other.
   const greyed =
     context.unsupportedGroup === 'hidden-by-setting'
-      ? `${one ? "the copy for a printer you haven't added doesn't" : "the copies for printers you haven't added don't"} ` +
-        'show unless Preferences > Developer > "Show unsupported presets" is on'
-      : `${one ? "the copy for a printer you haven't added only adds" : "the copies for printers you haven't added only add"} ` +
-        'that name, greyed out, under "Unsupported presets"';
+      ? "the other copies don't show unless Preferences > Developer > " +
+        '"Show unsupported presets" is on'
+      : 'all the other copies together add that name once more, greyed out, under ' +
+        '"Unsupported presets"';
   const made = one
     ? "made for a printer or nozzle you haven't added"
     : "made for printers or nozzles you haven't added";

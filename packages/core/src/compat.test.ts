@@ -343,7 +343,9 @@ describe('copies of a custom filament (one name in Studio)', () => {
       state: 'printer-not-added',
       family: { alias: 'Fam', copy: `Fam @${X2D('0.4')}`, copyState: 'selected' },
     });
-    expect(h2d.reason).toBe(`Copy of "Fam": only for printers you haven't added (${H2D})`);
+    expect(h2d.reason).toBe(
+      `Shown in Studio as "Fam"; only for printers you haven't added (${H2D})`,
+    );
     // The nozzle copy (R3) is a copy too; the P1S copy is for an added printer, so not one.
     expect(row(r, `Fam @${X2D('0.8')}`)).toMatchObject({
       status: 'info',
@@ -351,9 +353,17 @@ describe('copies of a custom filament (one name in Studio)', () => {
     });
     expect(row(r, `Fam @${P1S}`).compat).toMatchObject({ state: 'other-printer' });
     expect(row(r, `Fam @${P1S}`).compat?.family).toBeUndefined();
-    // No copy for an added printer: still unsupported.
+    // No copy for an added printer: still unsupported, but Studio lists it under its alias.
     expect(row(r, `Solo @${H2D}`).status).toBe('unsupported');
     expect(row(r, `Solo @${H2D}`).compat?.family).toBeUndefined();
+    expect(row(r, `Solo @${H2D}`).compat?.shownAs).toEqual({ alias: 'Solo', others: 0 });
+    expect(row(r, `Solo @${H2D}`).reason).toBe(
+      `Shown in Studio as "Solo"; only for printers you haven't added (${H2D})`,
+    );
+    const solo = r.findings.find((x) => x.presetName === `Solo @${H2D}` && x.ruleId === R2_ID)!;
+    expect(solo.explanation).toContain(
+      'In the list, Studio shows it as "Solo", the part of its name before "@".',
+    );
 
     const f = r.findings.find((x) => x.presetName === `Fam @${H2D}`)!;
     expect(f).toMatchObject({ ruleId: R2_ID, status: 'info', severity: 'info' });
@@ -375,7 +385,108 @@ describe('copies of a custom filament (one name in Studio)', () => {
     expect(note.explanation).toContain('2 filament presets are copies of your custom filament');
     expect(note.explanation).toContain('another copy of it is for a printer');
     expect(note.explanation).toContain('custom filament preset "Fam", made for printers');
+    expect(note.explanation).toContain(
+      'all the other copies together add that name once more, greyed out, under "Unsupported presets"',
+    );
+    expect(note.explanation).not.toContain("the copies for printers you haven't added");
     expect(note.explanation).toContain('Nothing to do.');
+  });
+
+  it('keeps every copy of a group with no usable copy, and says they share one entry', async () => {
+    const r = await scanWith([custom(`Pair @${H2D}`), custom(`Pair @${X2D('0.8')}`)]);
+    for (const name of [`Pair @${H2D}`, `Pair @${X2D('0.8')}`]) {
+      expect(row(r, name).status).toBe('unsupported');
+      expect(row(r, name).compat?.family).toBeUndefined();
+      expect(row(r, name).compat?.shownAs).toEqual({ alias: 'Pair', others: 1 });
+    }
+    const f = r.findings.find((x) => x.presetName === `Pair @${H2D}` && x.ruleId === R2_ID)!;
+    expect(f.explanation).toContain(
+      'In the list, Studio shows it as "Pair", the part of its name before "@"; that one ' +
+        'greyed-out entry also stands for your other copy "Pair @…" that isn\'t offered for ' +
+        'your printers either.',
+    );
+    expect(r.findings.some((x) => x.ruleId === FAMILY_NOTE_ID)).toBe(false);
+  });
+
+  it('prefers a copy that fits the selected process, and says when the best one does not', async () => {
+    const other = '0.20mm Standard @BBL H2D';
+    // The X2D copy is for the selected printer but only another process; the P1S copy fits.
+    const r = await scanWith([
+      custom(`Proc @${X2D('0.4')}`, { compatible_prints: [other] }),
+      custom(`Proc @${P1S}`),
+      custom(`Proc @${H2D}`),
+    ]);
+    expect(row(r, `Proc @${X2D('0.4')}`).compat).toMatchObject({
+      state: 'selected',
+      process: 'mismatch',
+    });
+    expect(row(r, `Proc @${H2D}`).compat?.family).toEqual({
+      alias: 'Proc',
+      copy: `Proc @${P1S}`,
+      copyState: 'other-printer',
+      copyPrinters: [P1S],
+    });
+    // Only a mismatched copy: the text says when "Only" is that copy.
+    const r2 = await scanWith([
+      custom(`Only @${X2D('0.4')}`, { compatible_prints: [other] }),
+      custom(`Only @${H2D}`),
+    ]);
+    expect(row(r2, `Only @${H2D}`).compat?.family).toEqual({
+      alias: 'Only',
+      copy: `Only @${X2D('0.4')}`,
+      copyState: 'selected',
+      copyProcess: 'mismatch',
+    });
+    const f = r2.findings.find((x) => x.presetName === `Only @${H2D}`)!;
+    expect(f.explanation).toContain(
+      `The copy "Only @${X2D('0.4')}" is offered for the printer selected now, but only with ` +
+        'other process presets than the selected one; when you select one of those, "Only" in ' +
+        'the list is that copy.',
+    );
+  });
+
+  it('words a copy for every printer, and names a copy listed under another name', async () => {
+    // Nothing after "@": no list from the name, so that copy is offered for every printer.
+    const r = await scanWith([custom('Every @'), custom(`Every @${H2D}`)]);
+    expect(row(r, `Every @${H2D}`).compat?.family).toEqual({
+      alias: 'Every',
+      copy: 'Every @',
+      copyState: 'all',
+    });
+    const f = r.findings.find((x) => x.presetName === `Every @${H2D}`)!;
+    expect(f.explanation).toContain(
+      'The copy "Every @" is offered for every printer, so "Every" in the list is that copy.',
+    );
+    const r2 = await scanWith([
+      {
+        name: 'Other name',
+        file: `Named @${X2D('0.4')}`,
+        base: true,
+        extra: { compatible_printers: [] },
+      },
+      custom(`Named @${H2D}`),
+    ]);
+    const f2 = r2.findings.find((x) => x.presetName === `Named @${H2D}`)!;
+    expect(f2.explanation).toContain(
+      `The copy "Named @${X2D('0.4')}" (listed here as "Other name") is offered for the printer`,
+    );
+  });
+
+  it("keeps a copy for one of the user's printer presets that can't load as its own row", async () => {
+    const r = await scanWith([
+      { type: 'machine', name: 'Gone X2D', inherits: 'Bambu Lab Nonexistent' },
+      custom(`Rep @${X2D('0.4')}`),
+      custom('Rep @Gone X2D'),
+    ]);
+    const rep = row(r, 'Rep @Gone X2D');
+    expect(rep.compat?.state).toBe('printer-hidden');
+    expect(rep.status).toBe('unsupported');
+    expect(rep.compat?.family).toBeUndefined();
+    expect(rep.compat?.shownAs).toEqual({ alias: 'Rep', others: 0 });
+    const f = r.findings.find((x) => x.presetName === 'Rep @Gone X2D' && x.ruleId === R2_ID)!;
+    expect(f.title).toBe("Made for a printer preset of yours that can't load");
+    expect(f.explanation).toContain('Repair that printer preset');
+    expect(r.findings.some((x) => x.ruleId === FAMILY_NOTE_ID)).toBe(false);
   });
 
   it('names a copy for another added printer when none is for the selected one', async () => {
@@ -426,6 +537,48 @@ describe('copies of a custom filament (one name in Studio)', () => {
     expect(row(r, `Dup @${X2D('0.4')}`).compat?.state).toBe('selected');
     expect(row(r, `Dup @${H2D}`).status).toBe('unsupported');
     expect(r.findings.some((f) => f.ruleId === FAMILY_NOTE_ID)).toBe(false);
+  });
+
+  it('follows the alias check the other way round: a later copy for a held printer is out', async () => {
+    // "Dup2 @All" sorts first and lists the X2D and the H2D, so it holds both; the H2D copy then
+    // gets no alias in Studio and keeps its full name.
+    const r = await scanWith([
+      custom('Dup2 @All', { compatible_printers: [X2D('0.4'), H2D] }),
+      custom(`Dup2 @${H2D}`),
+    ]);
+    expect(row(r, 'Dup2 @All').compat?.state).toBe('selected');
+    const h2d = row(r, `Dup2 @${H2D}`);
+    expect(h2d.status).toBe('unsupported');
+    expect(h2d.compat?.family).toBeUndefined();
+    expect(h2d.compat?.shownAs).toBeUndefined();
+    expect(h2d.reason).toBe(`Only for printers you haven't added (${H2D})`);
+  });
+
+  it('lets custom filaments that never show hold printers too', async () => {
+    // "instantiation": "false": loaded but never shown, and it takes "Inst" for the H2D first.
+    const r = await scanWith([
+      custom('Inst @A', { instantiation: 'false', compatible_printers: [H2D] }),
+      custom(`Inst @${X2D('0.4')}`),
+      custom(`Inst @${H2D}`),
+    ]);
+    expect(r.presets.find((p) => p.fileStem === 'Inst @A')?.compat).toBeUndefined();
+    const h2d = row(r, `Inst @${H2D}`);
+    expect(h2d.status).toBe('unsupported');
+    expect(h2d.compat?.family).toBeUndefined();
+    expect(h2d.compat?.shownAs).toBeUndefined();
+  });
+
+  it('reads base/ before the main folder, as Studio does', async () => {
+    // By name alone the main-folder "Fold @A" would come first and take "Fold" for the H2D.
+    const r = await scanWith([
+      { name: 'Fold @A', extra: { compatible_printers: [H2D] } },
+      custom(`Fold @${X2D('0.4')}`),
+      custom(`Fold @${H2D}`),
+    ]);
+    expect(row(r, `Fold @${H2D}`).compat?.family?.alias).toBe('Fold');
+    expect(row(r, 'Fold @A').compat).toMatchObject({ state: 'printer-not-added' });
+    expect(row(r, 'Fold @A').compat?.family).toBeUndefined();
+    expect(row(r, 'Fold @A').compat?.shownAs).toBeUndefined();
   });
 
   it('says where the copies are when OrcaSlicer hides the Unsupported group', async () => {
@@ -675,6 +828,11 @@ describe('fixtures', () => {
     expect(row(r, 'For My X2D').compat?.matchedPrinters).toEqual(['My X2D']);
     expect(row(r, 'Unknown Printer').compat?.guessed).toBe(true);
     expect(row(r, 'My PLA @Bambu Lab H2D 0.4 nozzle').compat?.source).toEqual({ kind: 'name' });
+    // Studio lists it as "My PLA" (its alias), not by its file name.
+    expect(row(r, 'My PLA @Bambu Lab H2D 0.4 nozzle').compat?.shownAs).toEqual({
+      alias: 'My PLA',
+      others: 0,
+    });
 
     const byRule = (id: string) =>
       r.findings.filter((f) => f.ruleId === id).map((f) => f.presetName);
