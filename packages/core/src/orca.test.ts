@@ -522,6 +522,11 @@ describe('OrcaSlicer vendor indexes that fail to load', () => {
       r.warnings.some((w) => w.includes("Presets based on Elegoo system presets can't be checked")),
     ).toBe(true);
     expect(r1Of(r, 'Mine')).toMatchObject({ status: 'info', title: 'Parent could not be checked' });
+    // The reason is the broken vendor, not the .opc format (there is no .opc file here).
+    expect(r1Of(r, 'Mine')?.explanation).toMatch(
+      /^Preset Doctor couldn't read OrcaSlicer's system presets from Elegoo, so it can't tell whether "Elegoo PLA Pro @ECC" still exists/,
+    );
+    expect(r1Of(r, 'Mine')?.explanation).not.toContain('packed format');
     expect(byName(r, 'Mine')?.status).toBe('info');
   });
 });

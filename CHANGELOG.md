@@ -32,9 +32,9 @@ before it is tagged.
   existing, not as a template, and a template parent gets its own title and reason.
 - OrcaSlicer: when its filament library can't be read, parents are not checked (instead of all
   being called missing); when another vendor can't be read, a parent that isn't found "could not
-  be checked". OrcaSlicer 2.2 and earlier find parents by their exact name only, so the renamed
-  and "Generic" fallbacks apply from 2.3 on. A restore skips a sync file when it can't tell
-  whether its preset is there.
+  be checked", and the explanation names that vendor (not the packed .opc format). OrcaSlicer 2.2
+  and earlier find parents by their exact name only, so the renamed and "Generic" fallbacks apply
+  from 2.3 on. A restore skips a sync file when it can't tell whether its preset is there.
 - Unsupported: the OrcaSlicer "Show unsupported presets" hint is given for filaments only (the
   setting doesn't affect the process list); the vendor is checked before an empty printer list,
   as in Studio; a preset made for one of your own printer presets that can't load points to that

@@ -43,9 +43,11 @@ export interface OrcaLookup {
   /**
    * True when .opc vendors exist: a name that isn't found may still be in one of them (an
    * unreadable file, or a derived old name, which the cache doesn't store), so it can't be called
-   * missing.
+   * missing. Also true when a vendor's index of this type failed to load (`failedVendors`).
    */
   unchecked: boolean;
+  /** The vendors whose index of this type failed to load (SystemIndexSet.failedVendors). */
+  failedVendors?: readonly string[];
   /** The vendors that are installed (system/<V>.json or .opc). */
   vendors: readonly string[];
 }
@@ -82,6 +84,7 @@ export async function orcaParentLookup(args: {
   version: string | null;
 }): Promise<OrcaLookup> {
   const { system, set, fs, accountId, type, presets } = args;
+  const failedVendors = set.failedVendors[type] ?? [];
   const userNames = new Set(presets.map((p) => p.fileStem));
   const v = parseVersion(args.version);
   const recursive = v === null || v.major > 2 || (v.major === 2 && v.minor >= 5);
@@ -196,7 +199,8 @@ export async function orcaParentLookup(args: {
     resolution: (name) => known.get(name) ?? undefined,
     // A vendor whose index failed to load may still hold the parent (Orca may even load it from
     // its .opc cache), so a name that isn't found can't be called missing either.
-    unchecked: set.opaque.length > 0 || (set.failedVendors[type]?.length ?? 0) > 0,
+    unchecked: set.opaque.length > 0 || failedVendors.length > 0,
+    failedVendors,
     vendors: set.vendors,
   };
 }

@@ -6,7 +6,8 @@
  *   not pre-selected; the preset loads either way;
  * - found through the "Generic" fallback: a note; it loads, but on top of the library's generic
  *   preset. The normal candidates are listed, none pre-selected;
- * - not found while .opc vendors exist: "could not be checked", never "hidden", no fix;
+ * - not found while .opc vendors exist, or a vendor's index failed to load: "could not be
+ *   checked", never "hidden", no fix;
  * - not found because the printer brand looks turned off in Orca: the normal finding, plus a hint
  *   to turn it back on, and nothing pre-selected.
  *
@@ -15,11 +16,18 @@
 import { userInherits } from '../resolve.js';
 import type { Finding, UserPreset } from '../types.js';
 import type { RuleContext } from './context.js';
-import { namedByInfoText, preselectedByInfoText } from './r1Common.js';
+import { joinList, namedByInfoText, preselectedByInfoText } from './r1Common.js';
 
-const UNCHECKED_TEXT = (name: string): string =>
-  `OrcaSlicer 2.5 keeps its built-in presets in a packed format that Preset Doctor can't read ` +
-  `yet, so it can't tell whether "${name}" still exists or suggest a replacement. If this preset ` +
+/**
+ * Why a parent that isn't found can't be called missing: vendors whose index failed to load
+ * (`failed`, also in the scan's warnings), or else .opc vendors.
+ */
+const UNCHECKED_TEXT = (name: string, failed: readonly string[]): string =>
+  (failed.length > 0
+    ? `Preset Doctor couldn't read OrcaSlicer's system presets from ${joinList(failed, 'and')}`
+    : "OrcaSlicer 2.5 keeps its built-in presets in a packed format that Preset Doctor can't read " +
+      'yet') +
+  `, so it can't tell whether "${name}" still exists or suggest a replacement. If this preset ` +
   'is missing in OrcaSlicer, recreate it from a current preset.';
 
 /**
@@ -103,7 +111,7 @@ export function orcaMissingFinding(f: Finding, missing: string, ctx: RuleContext
       ...(f.presetName !== undefined ? { presetName: f.presetName } : {}),
       status: 'info',
       title: 'Parent could not be checked',
-      explanation: UNCHECKED_TEXT(missing),
+      explanation: UNCHECKED_TEXT(missing, orca.failedVendors ?? []),
     };
   }
   if (f.status !== 'hidden' || f.severity !== 'error') return f;
