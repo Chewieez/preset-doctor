@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { judgeCompat, type CompatInputs, type EffectiveCompat, type PrinterRef } from './compat.js';
 import { nodeFs } from './node/nodeFs.js';
 import { defaultPaths } from './node/studioProcess.js';
-import { R2_ID, R3_ID, R3_NOTE_ID } from './rules/r2r3.js';
+import { FAMILY_NOTE_ID, familyCopiesFinding, R2_ID, R3_ID, R3_NOTE_ID } from './rules/r2r3.js';
+import { ORCA } from './slicer.js';
 import { scan } from './scan.js';
 import { FIXTURE_NAMES, fixtureRoot } from './testing/fixtures.js';
 import { fakeStudio, type FakeSystemPreset, type FakeUserPreset } from './testing/studio.js';
@@ -303,6 +304,140 @@ describe('R2/R3 verdicts', () => {
     }
     expect(r.findings.some((f) => f.ruleId === R2_ID)).toBe(false);
   });
+
+  it("words the vendor check for a preset with no printer list (no 'fits its list')", async () => {
+    const r = await scanWith(
+      [
+        { type: 'machine', name: 'Wizard Printer', base: true, extra: { printer_model: 'Mine' } },
+        fil('Open', 'Generic PLA @BBL H2D', { compatible_printers: [] }),
+      ],
+      { models: [], presets: { machine: 'Wizard Printer' } },
+    );
+    expect(row(r, 'Open').compat).toMatchObject({ state: 'other-vendor', printers: [] });
+    const f = r.findings.find((x) => x.presetName === 'Open' && x.ruleId === R2_ID)!;
+    expect(f.explanation).toContain('has no printer list of its own');
+    expect(f.explanation).toContain("None of the printers you've added uses one");
+    expect(f.explanation).not.toContain('fit its list');
+  });
+});
+
+/** A custom filament as "Create filament" makes it: no parent, its printer in its name. */
+const custom = (name: string, extra: Record<string, unknown> = {}): FakeUserPreset => ({
+  name,
+  base: true,
+  extra: { compatible_printers: [], ...extra },
+});
+
+describe('copies of a custom filament (one name in Studio)', () => {
+  it('turns a copy into a note when another copy is offered for an added printer', async () => {
+    const r = await scanWith([
+      custom(`Fam @${X2D('0.4')}`),
+      custom(`Fam @${P1S}`),
+      custom(`Fam @${H2D}`),
+      custom(`Fam @${X2D('0.8')}`),
+      custom(`Solo @${H2D}`),
+    ]);
+    const h2d = row(r, `Fam @${H2D}`);
+    expect(h2d.status).toBe('info');
+    expect(h2d.compat).toMatchObject({
+      state: 'printer-not-added',
+      family: { alias: 'Fam', copy: `Fam @${X2D('0.4')}`, copyState: 'selected' },
+    });
+    expect(h2d.reason).toBe(`Copy of "Fam": only for printers you haven't added (${H2D})`);
+    // The nozzle copy (R3) is a copy too; the P1S copy is for an added printer, so not one.
+    expect(row(r, `Fam @${X2D('0.8')}`)).toMatchObject({
+      status: 'info',
+      compat: { state: 'nozzle-not-added', family: { alias: 'Fam' } },
+    });
+    expect(row(r, `Fam @${P1S}`).compat).toMatchObject({ state: 'other-printer' });
+    expect(row(r, `Fam @${P1S}`).compat?.family).toBeUndefined();
+    // No copy for an added printer: still unsupported.
+    expect(row(r, `Solo @${H2D}`).status).toBe('unsupported');
+    expect(row(r, `Solo @${H2D}`).compat?.family).toBeUndefined();
+
+    const f = r.findings.find((x) => x.presetName === `Fam @${H2D}`)!;
+    expect(f).toMatchObject({ ruleId: R2_ID, status: 'info', severity: 'info' });
+    expect(f.title).toBe("A copy for a printer you haven't added");
+    expect(f.explanation).toContain('lists your custom filament presets "Fam @…" under one name');
+    expect(f.explanation).toContain(`The copy "Fam @${X2D('0.4')}" is offered for the printer`);
+    expect(f.explanation).toContain('only adds a greyed-out "Fam" under "Unsupported presets"');
+    expect(f.explanation).toContain('Nothing to do.');
+    const nozzle = r.findings.find((x) => x.presetName === `Fam @${X2D('0.8')}`)!;
+    expect(nozzle).toMatchObject({ ruleId: R3_ID, status: 'info' });
+
+    const note = r.findings.find((x) => x.ruleId === FAMILY_NOTE_ID)!;
+    expect(note).toMatchObject({
+      status: 'info',
+      severity: 'info',
+      title: 'Copies of presets you already use on your printers',
+    });
+    expect(note.presetType).toBeUndefined();
+    expect(note.explanation).toContain('2 filament presets are copies of your custom filament');
+    expect(note.explanation).toContain('another copy of it is for a printer');
+    expect(note.explanation).toContain('custom filament preset "Fam", made for printers');
+    expect(note.explanation).toContain('Nothing to do.');
+  });
+
+  it('names a copy for another added printer when none is for the selected one', async () => {
+    const r = await scanWith([custom(`Fam @${P1S}`), custom(`Fam @${H2D}`)]);
+    expect(row(r, `Fam @${H2D}`).compat?.family).toEqual({
+      alias: 'Fam',
+      copy: `Fam @${P1S}`,
+      copyState: 'other-printer',
+      copyPrinters: [P1S],
+    });
+    const f = r.findings.find((x) => x.presetName === `Fam @${H2D}`)!;
+    expect(f.explanation).toContain(
+      `is offered for ${P1S}, which you've added; when you select it, "Fam" in the list is that copy`,
+    );
+  });
+
+  it('follows Studio: the part before "@", trimmed; root filaments only; never processes', async () => {
+    const r = await scanWith([
+      custom(`Trim@${X2D('0.4')}`),
+      custom(`Trim   @${H2D}`),
+      // Based on a system preset: Studio gives it no alias.
+      fil(`Kid @${H2D}`, 'Generic PLA @BBL H2D'),
+      custom(`Kid @${X2D('0.4')}`),
+      { type: 'process', name: `Proc @${H2D}`, base: true, extra: { compatible_printers: [H2D] } },
+      {
+        type: 'process',
+        name: `Proc @${X2D('0.4')}`,
+        base: true,
+        extra: { compatible_printers: [X2D('0.4')] },
+      },
+      custom(`@${H2D}`),
+      custom(`@${X2D('0.4')}`),
+    ]);
+    expect(row(r, `Trim   @${H2D}`).compat?.family?.alias).toBe('Trim');
+    expect(row(r, `Kid @${H2D}`).status).toBe('unsupported');
+    expect(row(r, `Proc @${H2D}`).status).toBe('unsupported');
+    // Nothing before "@": no alias.
+    expect(row(r, `@${H2D}`).status).toBe('unsupported');
+  });
+
+  it("leaves out a copy that Studio gives no alias: one holding a printer of an earlier copy's", async () => {
+    // In file name order, the H2D copy takes "Dup" for the H2D first; the X2D copy also lists
+    // the H2D, so Studio keeps its full name and the H2D copy has no usable copy in its family.
+    const r = await scanWith([
+      custom(`Dup @${X2D('0.4')}`, { compatible_printers: [X2D('0.4'), H2D] }),
+      custom(`Dup @${H2D}`),
+    ]);
+    expect(row(r, `Dup @${X2D('0.4')}`).compat?.state).toBe('selected');
+    expect(row(r, `Dup @${H2D}`).status).toBe('unsupported');
+    expect(r.findings.some((f) => f.ruleId === FAMILY_NOTE_ID)).toBe(false);
+  });
+
+  it('says where the copies are when OrcaSlicer hides the Unsupported group', async () => {
+    const f = familyCopiesFinding(
+      [{ name: 'Fam @X', family: { alias: 'Fam', copy: 'Fam @Y', copyState: 'selected' } }],
+      { checked: true, enabled: [], userPrinters: 0, unsupportedGroup: 'hidden-by-setting' },
+      ORCA,
+    )!;
+    expect(f.explanation).toContain('1 filament preset is a copy');
+    expect(f.explanation).toContain('"Show unsupported presets" is on');
+    expect(f.explanation).not.toContain('greyed out');
+  });
 });
 
 describe('the conf: added and selected printers', () => {
@@ -519,6 +654,8 @@ describe('fixtures', () => {
       'Condition Only': state('Condition Only'),
       'Other Process': state('Other Process'),
       'My PLA @Bambu Lab H2D 0.4 nozzle': state('My PLA @Bambu Lab H2D 0.4 nozzle'),
+      'My PETG @Bambu Lab X2D 0.4 nozzle': state('My PETG @Bambu Lab X2D 0.4 nozzle'),
+      'My PETG @Bambu Lab H2D 0.4 nozzle': state('My PETG @Bambu Lab H2D 0.4 nozzle'),
       'My X2D': state('My X2D'),
     }).toEqual({
       'On X2D': 'ok selected',
@@ -530,6 +667,8 @@ describe('fixtures', () => {
       'Condition Only': 'ok cant-tell',
       'Other Process': 'ok selected mismatch',
       'My PLA @Bambu Lab H2D 0.4 nozzle': 'unsupported printer-not-added',
+      'My PETG @Bambu Lab X2D 0.4 nozzle': 'ok selected',
+      'My PETG @Bambu Lab H2D 0.4 nozzle': 'info printer-not-added',
       'My X2D': 'ok',
     });
     expect(row(r, 'On P1S').compat?.matchedPrinters).toEqual([P1S]);
@@ -540,8 +679,22 @@ describe('fixtures', () => {
     const byRule = (id: string) =>
       r.findings.filter((f) => f.ruleId === id).map((f) => f.presetName);
     expect(byRule(R2_ID).sort()).toEqual(
-      ['My PLA @Bambu Lab H2D 0.4 nozzle', 'On H2D', 'Unknown Printer'].sort(),
+      [
+        'My PETG @Bambu Lab H2D 0.4 nozzle',
+        'My PLA @Bambu Lab H2D 0.4 nozzle',
+        'On H2D',
+        'Unknown Printer',
+      ].sort(),
     );
+    // "My PETG" has a copy for the selected printer: one name in Studio, so only a note.
+    expect(row(r, 'My PETG @Bambu Lab H2D 0.4 nozzle').compat?.family).toEqual({
+      alias: 'My PETG',
+      copy: 'My PETG @Bambu Lab X2D 0.4 nozzle',
+      copyState: 'selected',
+    });
+    const copies = r.findings.find((f) => f.ruleId === FAMILY_NOTE_ID)!;
+    expect(copies.explanation).toContain('1 filament preset is a copy of your custom filament');
+    expect(copies.explanation).toContain('custom filament preset "My PETG", made for a printer');
     expect(byRule(R3_ID)).toEqual(['On X2D 08']);
     const note = r.findings.find((f) => f.ruleId === R3_NOTE_ID)!;
     expect(note.explanation).toContain('2 process presets are made for another printer');
@@ -563,8 +716,9 @@ describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live printer checks (
     for (const p of r.presets) {
       const loaded = p.status !== 'hidden' && p.status !== 'broken';
       if (p.type === 'machine' || !loaded) expect(p.compat).toBeUndefined();
+      // R2/R3 make a row 'unsupported', unless it is a copy of a custom filament in use.
       expect(p.status === 'unsupported').toBe(
-        p.ruleIds.includes(R2_ID) || p.ruleIds.includes(R3_ID),
+        (p.ruleIds.includes(R2_ID) || p.ruleIds.includes(R3_ID)) && p.compat?.family === undefined,
       );
     }
     const compatFindings = r.findings.filter((f) => f.compat !== undefined);

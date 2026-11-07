@@ -22,6 +22,7 @@ import {
   RULE_IDS,
   type CompatContext,
   type CompatDetail,
+  type CompatFamily,
   type Finding,
   type PresetType,
 } from '../types.js';
@@ -30,6 +31,7 @@ import { joinList, shortList } from './r1Common.js';
 export const R2_ID = RULE_IDS.printerNotAdded;
 export const R3_ID = RULE_IDS.nozzleNotAdded;
 export const R3_NOTE_ID = RULE_IDS.notForSelection;
+export const FAMILY_NOTE_ID = RULE_IDS.familyCopies;
 
 /** Follows a printer name or model that Preset Doctor read from a printer's name. */
 export const GUESSED_NOTE = "(Preset Doctor read this from the printer's name)";
@@ -82,6 +84,7 @@ export function compatFinding(
   profile: SlicerProfile,
 ): Finding | null {
   const { detail, type } = args;
+  if (detail.family) return familyCopyFinding(args, detail.family, profile);
   const studio = profile.displayName;
   const short = profile.shortName;
   const intro = `${studio} loads this ${TERMS[type].noun}, but ${where(type, profile, args.context)}.`;
@@ -157,9 +160,15 @@ export function compatFinding(
         title: "Made for another brand's printer profile",
         explanation: join(
           intro,
-          `It is based on ${vendor}'s presets, and ${short} only offers those for ${vendor} ` +
-            'printers. Your printers that fit its list use another profile (for example a ' +
-            'printer you created yourself).',
+          detail.printers.length === 0
+            ? // No list: it is for every printer of that vendor, and no added printer is one.
+              `It is based on ${vendor}'s presets and has no printer list of its own, so ` +
+                `${short} offers it for every printer that uses a ${vendor} profile. None of ` +
+                "the printers you've added uses one (a printer you created yourself, for " +
+                'example, has no brand profile).'
+            : `It is based on ${vendor}'s presets, and ${short} only offers those for ${vendor} ` +
+                'printers. Your printers that fit its list use another profile (for example a ' +
+                'printer you created yourself).',
           source,
         ),
       };
@@ -187,8 +196,108 @@ export function compatFinding(
   }
 }
 
+/**
+ * The note for a custom filament copy whose family has a copy offered for an added printer:
+ * the slicer lists the family under one name, so this copy adds at most a greyed-out entry of
+ * that name, and there is nothing to do (src/slic3r/GUI/PresetComboBoxes.cpp:1586-1589,
+ * 1717-1729, 1851@v02.09.01.70).
+ */
+function familyCopyFinding(
+  args: {
+    path: string;
+    name: string;
+    type: PresetType;
+    detail: CompatDetail;
+    context: CompatContext;
+  },
+  family: CompatFamily,
+  profile: SlicerProfile,
+): Finding | null {
+  const { detail } = args;
+  const studio = profile.displayName;
+  const short = profile.shortName;
+  const unknownNames = detail.unknownNames ?? [];
+  const known = detail.printers.filter((p) => !unknownNames.includes(p));
+  let title: string;
+  let what: string;
+  switch (detail.state) {
+    case 'printer-not-added':
+      title = "A copy for a printer you haven't added";
+      what = `is made for ${shortList(known, NAMES_SHOWN)}, which you haven't added`;
+      break;
+    case 'nozzle-not-added': {
+      const guess = detail.guessed ? ` ${GUESSED_NOTE}` : '';
+      title = "A copy for a nozzle size you haven't added";
+      what =
+        `is made for the ${detail.model ?? 'printer'} with a ` +
+        `${sizes(detail.nozzles ?? [], 'or')} nozzle${guess}, which you haven't added`;
+      break;
+    }
+    case 'unknown-printers':
+      title = "A copy for printers you haven't added";
+      what = `lists printer names ${short} doesn't know (${shortList(quoted(detail.printers), NAMES_SHOWN)})`;
+      break;
+    case 'printer-hidden': {
+      const names = detail.hiddenPrinters ?? [];
+      title = "A copy for a printer you haven't added";
+      what =
+        `is made for your printer preset${names.length === 1 ? '' : 's'} ` +
+        `${shortList(quoted(names), NAMES_SHOWN)}, which ${short} can't load right now`;
+      break;
+    }
+    case 'other-vendor':
+      title = "A copy for printers you haven't added";
+      what = `is based on ${detail.vendor ?? 'another vendor'}'s presets, which none of your printers uses`;
+      break;
+    default:
+      return null;
+  }
+  const shown =
+    args.context.unsupportedGroup === 'hidden-by-setting'
+      ? `${short} doesn't show it (it hides unsupported presets unless Preferences > Developer > ` +
+        '"Show unsupported presets" is on)'
+      : `it only adds a greyed-out "${family.alias}" under "Unsupported presets"`;
+  const listed = `"${family.alias}" in the list is that copy`;
+  const copyPrinters = family.copyPrinters ?? [];
+  const copyFor =
+    family.copyState === 'selected'
+      ? `is offered for the printer selected now, so ${listed}`
+      : family.copyState === 'all'
+        ? `is offered for every printer, so ${listed}`
+        : `is offered for ${shortList(copyPrinters, NAMES_SHOWN)}, which you've added; when you ` +
+          `select ${copyPrinters.length === 1 ? 'it' : 'one of them'}, ${listed}`;
+  const hiddenPrinters = detail.hiddenPrinters ?? [];
+  return {
+    presetPath: args.path,
+    presetName: args.name,
+    presetType: args.type,
+    severity: 'info',
+    status: 'info',
+    compat: detail,
+    ruleId: detail.state === 'nozzle-not-added' ? R3_ID : R2_ID,
+    title,
+    explanation: join(
+      `${studio} lists your custom filament presets "${family.alias} @…" under one name, ` +
+        `"${family.alias}". This copy ${what}, so ${shown}.`,
+      sourceText(detail, profile),
+      `The copy "${family.copy}" ${copyFor}.`,
+      detail.state !== 'printer-hidden'
+        ? 'Nothing to do.'
+        : hiddenPrinters.length === 1
+          ? 'If you repair that printer preset, this copy is offered for it again.'
+          : 'If you repair those printer presets, this copy is offered for them again.',
+    ),
+  };
+}
+
 /** One line for the table, per docs/design-v0.2.md section 5.4. */
 export function compatReason(detail: CompatDetail, profile: SlicerProfile): string | undefined {
+  const reason = verdictReason(detail, profile);
+  if (reason === undefined || !detail.family) return reason;
+  return `Copy of "${detail.family.alias}": ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`;
+}
+
+function verdictReason(detail: CompatDetail, profile: SlicerProfile): string | undefined {
   switch (detail.state) {
     case 'printer-not-added': {
       const unknown = detail.unknownNames ?? [];
@@ -276,6 +385,49 @@ export function notForSelectionFinding(
         ? "Some presets are for another printer you've added"
         : 'Some filament presets are for another process preset',
     explanation: sentences.join(' '),
+  };
+}
+
+/**
+ * The one scan-level note for custom filament copies made for printers (or nozzles) that aren't
+ * added, whose family has a copy that is (`detail.family`). Studio lists each family under one
+ * name, so these copies are no problem to act on. Null when there are none.
+ */
+export function familyCopiesFinding(
+  items: readonly { name: string; family: CompatFamily }[],
+  context: CompatContext,
+  profile: SlicerProfile,
+): Finding | null {
+  if (items.length === 0) return null;
+  const studio = profile.displayName;
+  const n = items.length;
+  const aliases = [...new Set(items.map((i) => i.family.alias))];
+  const groups = aliases.length;
+  const one = n === 1;
+  const greyed =
+    context.unsupportedGroup === 'hidden-by-setting'
+      ? `${one ? "the copy for a printer you haven't added doesn't" : "the copies for printers you haven't added don't"} ` +
+        'show unless Preferences > Developer > "Show unsupported presets" is on'
+      : `${one ? "the copy for a printer you haven't added only adds" : "the copies for printers you haven't added only add"} ` +
+        'that name, greyed out, under "Unsupported presets"';
+  const made = one
+    ? "made for a printer or nozzle you haven't added"
+    : "made for printers or nozzles you haven't added";
+  const what =
+    groups === 1
+      ? `${one ? 'is a copy' : 'are copies'} of your custom filament preset "${aliases[0]!}", ${made}; ` +
+        "another copy of it is for a printer you've added."
+      : `are copies of your custom filament presets, ${made}; each group also has a copy for a ` +
+        `printer you've added (${groups} groups: ${shortList(quoted(aliases), NAMES_SHOWN)}).`;
+  return {
+    ruleId: FAMILY_NOTE_ID,
+    severity: 'info',
+    presetPath: profile.confFile,
+    status: 'info',
+    title: 'Copies of presets you already use on your printers',
+    explanation:
+      `${count(n, 'filament')} ${what} ${studio} lists each group under one name, the part before ` +
+      `"@": the copy for the printer you select under "User presets", and ${greyed}. Nothing to do.`,
   };
 }
 

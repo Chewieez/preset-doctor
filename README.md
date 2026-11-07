@@ -221,6 +221,10 @@ and tells you which case it is:
   delete the preset in Studio.
 - **A note above the table** ("Some presets are for another printer you've added"): those presets
   are fine. Studio shows them when you select that printer. Click **Show them** to list them.
+- **A note "Copies of presets you already use on your printers"**: "Create filament" makes one
+  copy of a filament per printer (`<name> @<printer>`), and Studio lists them all under one name,
+  `<name>`. When one copy is for a printer you've added, the copies for the other printers only add
+  that name, greyed out, under "Unsupported presets". Nothing to do; **Show them** lists them.
 
 Preset Doctor doesn't change these presets: Studio keeps each preset's printer list itself, and
 editing it by hand would fight that. A process preset that doesn't fit isn't greyed out but left

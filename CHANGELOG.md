@@ -7,6 +7,14 @@ before it is tagged.
 
 ### Changed
 
+- **Copies of one custom filament are a note, not "Unsupported".** "Create filament" makes one
+  copy per printer (`<name> @<printer>`), and Studio lists each group under one name: the copy
+  for the selected printer under "User presets", the other copies as one greyed-out entry under
+  "Unsupported presets". When a group has a copy for a printer you've added, its other copies
+  are now "OK, with notes" (the details name the copy in use) and summed up in a new note,
+  "Copies of presets you already use on your printers" ("Show them" lists them), instead of
+  needing attention. A copy with no such sibling is still Unsupported. On a real folder this
+  took 46 Unsupported filaments (13 groups) down to none, so the hidden presets come first.
 - **Cloud sync note is calmer and more precise.** Bambu Studio's source shows a cloud copy that
   still names the missing parent is skipped, so it can't undo a repair, and turning sync off
   shouldn't be needed. The repair stays on this computer until the preset is saved once in
@@ -39,7 +47,9 @@ before it is tagged.
   setting doesn't affect the process list); the vendor is checked before an empty printer list,
   as in Studio; a preset made for one of your own printer presets that can't load points to that
   printer's repair; a custom filament's name rule reaches the presets based on it; the detail
-  panel no longer says "every printer" when it can't tell.
+  panel no longer says "every printer" when it can't tell; a preset based on another brand's
+  presets with no printer list no longer says "your printers that fit its list use another
+  profile" (it says none of your printers uses that brand's profile).
 - Windows app: after switching to another folder or slicer, the next repair makes a fresh backup
   (the other slicer may have changed files unseen); the Studio status follows the folder shown,
   even when its scan failed; the slicer switch is pressed only on a default folder; before a scan,
@@ -67,7 +77,8 @@ before it is tagged.
   loads it but doesn't offer it for any of them: it is only for a printer you haven't added, a
   nozzle size you haven't added, printer names Studio doesn't know, or another brand's printer
   profile. Each comes with what to do in Studio; nothing is changed. Presets made for another
-  printer you've added are summed up in one note ("Show them" lists them). The app shows the added
+  printer you've added are summed up in one note ("Show them" lists them), and so are copies of
+  a custom filament whose group has a copy for one of your printers. The app shows the added
   printers above the table; the command line adds a "Loaded, but not offered for your printers"
   group. The exit code is unchanged.
 - **Process and printer presets.** They are checked like filament presets, each against its own

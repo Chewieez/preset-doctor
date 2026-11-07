@@ -122,8 +122,9 @@ backup from step 0 back into `%APPDATA%\BambuStudio`, replacing the files there.
 
 This checks the "Unsupported" helper (SPEC.md §5, R2 and R3; source findings in SPEC.md §10,
 finding 5). It needs no repair and writes nothing. Close Studio, scan with Preset Doctor, and note
-which presets it marks **Unsupported**, and which ones the note "Some presets are for another
-printer you've added" lists (click **Show them**). The steps that add or remove a printer or
+which presets it marks **Unsupported**, and which ones the notes "Some presets are for another
+printer you've added" and "Copies of presets you already use on your printers" list (click
+**Show them**). The steps that add or remove a printer or
 nozzle change Studio's own settings: undo them in Studio afterwards.
 
 1. **R2, process.** Open Studio and select the X2D. Look for the process preset Preset Doctor
@@ -133,7 +134,8 @@ nozzle change Studio's own settings: undo them in Studio afterwards.
      Note whether the sidebar and the Process tab behave the same way (this is the
      medium-confidence part).
 2. **R2, filament.** Open the filament dropdown and look for a filament Preset Doctor marks
-   Unsupported.
+   Unsupported. If it marks none (copies of a filament you created for several printers are in
+   the copies note instead, see step 5), skip this step.
    - **Predicted:** it is greyed out under "Unsupported presets", on every printer you've added.
    - Then add the printer it is made for in Studio. Note the exact menu wording you used (Preset
      Doctor says "printer selection"). **Predicted:** the preset shows normally once that printer
@@ -147,6 +149,13 @@ nozzle change Studio's own settings: undo them in Studio afterwards.
    in Studio.
    - **Predicted:** it shows normally there, and greyed out (filament) or not at all (process)
      on the X2D.
+5. **Copies of one custom filament.** Click **Show them** on the note "Copies of presets you
+   already use on your printers" and pick one group, a filament made with "Create filament" for
+   several printers (`<name> @<printer>`). In Studio, select the printer whose copy Preset Doctor
+   names in that preset's details, and open the filament dropdown.
+   - **Predicted:** `<name>` (the part before "@") is listed once under "User presets" (the copy
+     for that printer), and once more, greyed out, under "Unsupported presets" (all the copies for
+     printers you haven't added together). No copy shows its full `<name> @<printer>` name.
 
 ## 6. OrcaSlicer (optional, about 15 minutes)
 
@@ -212,6 +221,7 @@ Sync at start:   on / off     Logged in: yes / no
 5.2 menu wording for adding a printer:
 5.3 (optional) nozzle removed: Unsupported in Preset Doctor and in Studio:
 5.4 a preset from "Show them" shows normally on its printer:
+5.5 copies: one name under User presets, the same name once greyed under Unsupported:
 6.0 OrcaSlicer version:                 (Help > About)
 6.1 switch shown; pill follows OrcaSlicer open/closed; new presets OK:
 6.2 made-up parent: Hidden in Preset Doctor, absent in OrcaSlicer:

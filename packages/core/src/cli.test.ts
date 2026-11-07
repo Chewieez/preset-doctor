@@ -419,7 +419,12 @@ describe('preset-doctor CLI with printer checks (R2/R3)', () => {
       "On H2D                                   Only for printers you haven't added (Bambu Lab H2D 0.4 nozzle)",
     );
     expect(r.out).toContain("Made for the 0.8 mm nozzle, which you haven't added");
-    expect(r.out).toContain('Summary: 0 hidden, 0 broken, 4 unsupported, 0 OK with notes, 6 OK.');
+    expect(r.out).toContain('Note: Copies of presets you already use on your printers.');
+    expect(r.out).toContain(
+      'My PETG @Bambu Lab H2D 0.4 nozzle [base]  Copy of "My PETG": only for printers you ' +
+        "haven't added (Bambu Lab H2D 0.4 nozzle)",
+    );
+    expect(r.out).toContain('Summary: 0 hidden, 0 broken, 4 unsupported, 1 OK with notes, 7 OK.');
     expect(r.out).not.toContain('To preview repairs');
     const json = JSON.parse((await run('scan', '--json')).out) as ScanResult;
     expect(json.compat.checked).toBe(true);
@@ -437,6 +442,10 @@ describe('preset-doctor CLI with printer checks (R2/R3)', () => {
     const { run } = setup('unsupported-bambu');
     const r = await run('scan', '--type', 'printer');
     expect(r.out).not.toContain("Some presets are for another printer you've added");
+    expect(r.out).not.toContain('Copies of presets you already use');
+    expect((await run('scan', '--type', 'process')).out).not.toContain(
+      'Copies of presets you already use',
+    );
     expect((await run('scan', '--type', 'process')).out).toContain(
       "Note: Some presets are for another printer you've added.",
     );

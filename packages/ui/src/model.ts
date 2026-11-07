@@ -19,8 +19,13 @@ export const CLOUD_SYNC_RULE = 'R5_CLOUD_SYNC' satisfies RuleId;
 /** The grouped "for another printer you've added" note (scan-level, like R5). */
 export const NOT_FOR_SELECTION_RULE = 'R3_NOT_FOR_SELECTION' satisfies RuleId;
 
+/** The grouped note for copies of a custom filament whose other copy is in use (scan-level). */
+export const FAMILY_COPIES_RULE = 'R2_FAMILY_COPIES' satisfies RuleId;
+
 /** Search text that lists exactly the presets the grouped note counts. */
 export const COMPAT_OTHER_QUERY = 'compat:other';
+/** Search text that lists exactly the copies the copies note counts. */
+export const COMPAT_COPIES_QUERY = 'compat:copies';
 
 export const SLICER_NAME: Record<SlicerId, string> = {
   bambu: 'Bambu Studio',
@@ -247,12 +252,15 @@ export function visiblePresets(
 ): PresetSummary[] {
   const q = search.trim().toLowerCase();
   const other = q === COMPAT_OTHER_QUERY;
+  const copies = q === COMPAT_COPIES_QUERY;
   return presetsOfType(scan, tab)
     .filter((p) => filter === 'all' || isProblem(p, byPath))
     .filter((p) =>
       other
         ? p.compat !== undefined && isForOtherSelection(p.compat)
-        : q === '' || displayName(p).toLowerCase().includes(q),
+        : copies
+          ? p.compat?.family !== undefined
+          : q === '' || displayName(p).toLowerCase().includes(q),
     )
     .sort(
       (a, b) =>
@@ -333,6 +341,15 @@ export function notForSelectionFinding(scan: ScanResult): Finding | undefined {
 /** Counted in the grouped note: made for another added printer, or another process. */
 export function isForOtherSelection(c: CompatDetail): boolean {
   return c.state === 'other-printer' || c.process === 'mismatch';
+}
+
+export function familyCopiesFinding(scan: ScanResult): Finding | undefined {
+  return scan.findings.find((f) => f.ruleId === FAMILY_COPIES_RULE);
+}
+
+/** Rows the copies note's "Show them" lists (see COMPAT_COPIES_QUERY), across every tab. */
+export function familyCopies(scan: ScanResult): PresetSummary[] {
+  return scan.presets.filter((p) => p.compat?.family !== undefined);
 }
 
 /** Rows the grouped note's "Show them" lists (see COMPAT_OTHER_QUERY), across every tab. */

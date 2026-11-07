@@ -12,11 +12,14 @@ import {
   backupFitsFolder,
   choiceFor,
   compatLines,
+  COMPAT_COPIES_QUERY,
   COMPAT_OTHER_QUERY,
   countByStatus,
   countByType,
   defaultTab,
   displayName,
+  familyCopies,
+  familyCopiesFinding,
   findingsByPath,
   fixesFor,
   forOtherSelection,
@@ -324,6 +327,39 @@ describe('printer checks (R2/R3)', () => {
       'o.json',
     ]);
     expect(forOtherSelection(withCompat).map((p) => p.path)).toEqual(['o.json']);
+  });
+
+  it('keeps a copy of a custom filament in use out of the problems, and lists the copies', () => {
+    const copy: PresetSummary = {
+      ...preset('k.json', 'info', 'Fam @Bambu Lab H2D 0.4 nozzle'),
+      compat: {
+        state: 'printer-not-added',
+        printers: ['Bambu Lab H2D 0.4 nozzle'],
+        source: { kind: 'own' },
+        family: { alias: 'Fam', copy: 'Fam @Bambu Lab X2D 0.4 nozzle', copyState: 'selected' },
+      },
+    };
+    const copiesNote: Finding = {
+      ruleId: 'R2_FAMILY_COPIES',
+      severity: 'info',
+      presetPath: 'BambuStudio.conf',
+      status: 'info',
+      title: 'Copies of presets you already use on your printers',
+      explanation: '',
+    };
+    const withCopy: ScanResult = {
+      ...withCompat,
+      presets: [...withCompat.presets, copy],
+      findings: [...withCompat.findings, copiesNote],
+    };
+    const byPath = findingsByPath(withCopy);
+    expect(isProblem(copy, byPath)).toBe(false);
+    expect(visiblePresets(withCopy, byPath, 'all', COMPAT_COPIES_QUERY).map((p) => p.path)).toEqual(
+      ['k.json'],
+    );
+    expect(familyCopies(withCopy).map((p) => p.path)).toEqual(['k.json']);
+    expect(familyCopiesFinding(withCopy)).toBe(copiesNote);
+    expect(familyCopiesFinding(withCompat)).toBeUndefined();
   });
 
   it('describes the added printers, or why the checks were skipped', () => {

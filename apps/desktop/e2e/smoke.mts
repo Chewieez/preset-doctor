@@ -262,6 +262,25 @@ try {
       (await page.locator('[data-testid=preset-row] .name').allTextContents()).sort(),
       ['For My X2D', 'On P1S'],
     );
+
+    // The copies note: Studio lists both "My PETG" copies under one name, so the H2D copy is a
+    // note, not an unsupported row. "Show them" goes back to the filament tab for it.
+    const copies = page.locator('[data-testid=family-copies-note]');
+    assert.match(
+      (await copies.textContent()) ?? '',
+      /Copies of presets you already use on your printers\. 1 filament preset is a copy/,
+    );
+    await copies.locator('button:has-text("Show them")').click();
+    assert.deepEqual(await page.locator('[data-testid=preset-row] .name').allTextContents(), [
+      'My PETG @Bambu Lab H2D 0.4 nozzle',
+    ]);
+    await row(page, 'My PETG @Bambu Lab H2D 0.4 nozzle').click();
+    await detail.locator('.badge.status-info').waitFor();
+    await detail.locator('h3', { hasText: "A copy for a printer you haven't added" }).waitFor();
+    await detail
+      .locator('.finding', { hasText: 'The copy "My PETG @Bambu Lab X2D 0.4 nozzle" is offered' })
+      .waitFor();
+    await page.click('[data-testid=type-tab-process]');
     await page.fill('input[type=search]', '');
     await row(page, 'On X2D 08').click();
     await detail.locator('h3', { hasText: "Made for a nozzle size you haven't added" }).waitFor();

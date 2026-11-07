@@ -30,7 +30,7 @@ import { errorMessage } from './fs.js';
 import { VERSION } from './index.js';
 import { defaultPaths, isSlicerRunning, type DefaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
-import { R3_NOTE_ID } from './rules/r2r3.js';
+import { FAMILY_NOTE_ID, R3_NOTE_ID } from './rules/r2r3.js';
 import { R5_ID, scan, ScanError } from './scan.js';
 import {
   BAMBU,
@@ -414,10 +414,14 @@ function printHeader(r: ScanResult, args: Args, out: (l?: string) => void): void
         : ''),
   );
   if (r.compat.checked) out(`Printers: ${printersLine(r)}`);
-  // The R3 note is about filament and process presets only.
+  // The R3 note is about filament and process presets only, the copies note about filaments.
   const r3Shown = selected(args, { type: 'filament' }) || selected(args, { type: 'process' });
+  const copiesShown = selected(args, { type: 'filament' });
   for (const f of r.findings.filter(
-    (x) => x.ruleId === R5_ID || (x.ruleId === R3_NOTE_ID && r3Shown),
+    (x) =>
+      x.ruleId === R5_ID ||
+      (x.ruleId === R3_NOTE_ID && r3Shown) ||
+      (x.ruleId === FAMILY_NOTE_ID && copiesShown),
   )) {
     out();
     out(`Note: ${f.title}. ${f.explanation}`);

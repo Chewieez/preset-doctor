@@ -20,7 +20,14 @@ import { parseCompatiblePrinter } from './names.js';
 import { chain, userInherits, type ResolveContext } from './resolve.js';
 import type { SlicerProfile } from './slicer.js';
 import type { SystemIndex } from './systemIndex.js';
-import type { CompatContext, CompatDetail, CompatSource, PresetType, UserPreset } from './types.js';
+import type {
+  CompatContext,
+  CompatDetail,
+  CompatFamily,
+  CompatSource,
+  PresetType,
+  UserPreset,
+} from './types.js';
 
 /** A printer preset that a list entry can name. */
 export interface PrinterRef {
@@ -416,6 +423,93 @@ export function isUnsupported(detail: CompatDetail): boolean {
 /** Counted in the grouped "for another printer you've added" note. */
 export function isForOtherSelection(detail: CompatDetail): boolean {
   return detail.state === 'other-printer' || detail.process === 'mismatch';
+}
+
+/**
+ * The one name the slicer lists a custom filament under, or null when it keeps its own name.
+ * Studio (set_custom_preset_alias, src/libslic3r/Preset.cpp:3470-3490@v02.09.01.70) gives an
+ * alias only to user filament presets whose "inherits" is empty: the part of the name (the file
+ * name, :1455) before the first "@", with trailing spaces removed; no "@", or nothing before it,
+ * means no alias. It is set when the preset loads (:1567) and when "Create filament" clones a
+ * preset for each printer (clone_presets, :2585-2586; clone_presets_for_printer names the copies
+ * "<prefix> @<printer>" with an empty "inherits" and that printer as the list, :2562,
+ * :2603-2616). The Plater list shows the alias (Preset::label, :757-761, through
+ * PlaterPresetComboBox::get_preset_name, src/slic3r/GUI/PresetComboBoxes.cpp:1586-1589), and its
+ * groups are maps keyed by that label, so all incompatible copies make one greyed entry under
+ * "Unsupported presets" (:1717-1729, 1851). OrcaSlicer does the same for root filaments
+ * (src/libslic3r/Preset.cpp:3262-3282@v2.3.2, :4481-4507@v2.5.0).
+ */
+export function customFilamentAlias(preset: UserPreset): string | null {
+  if (preset.type !== 'filament' || preset.json === undefined) return null;
+  if (userInherits(preset) !== '') return null;
+  const at = preset.fileStem.indexOf('@');
+  if (at < 0) return null;
+  const alias = preset.fileStem.slice(0, at).trimEnd();
+  return alias === '' ? null : alias;
+}
+
+/** The verdicts that make a copy "offered for an added printer", best first. */
+const USABLE_RANK: Record<CompatFamily['copyState'], number> = {
+  selected: 0,
+  all: 1,
+  'other-printer': 2,
+};
+
+function isUsable(
+  detail: CompatDetail,
+): detail is CompatDetail & { state: CompatFamily['copyState'] } {
+  return detail.state in USABLE_RANK;
+}
+
+/** File name order, as Windows lists a folder (upper-cased, then by code unit). */
+function byFileName(a: string, b: string): number {
+  const x = a.toUpperCase();
+  const y = b.toUpperCase();
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
+/**
+ * Marks the R2/R3 verdicts of custom filament copies whose family (one alias) has a copy offered
+ * for an added printer: `detail.family` names that copy. Only presets with a verdict take part
+ * (the loaded ones).
+ *
+ * Studio doesn't give the alias to a preset when another preset with that alias already holds
+ * one of the printers in its list (is_alias_exist, Preset.cpp:2975-2995; set_printer_hold_alias,
+ * :3493-3531); such a preset keeps its full name and its own row, so it isn't part of the
+ * family. Presets are taken in file name order, the order Studio meets them in the folder
+ * (:1449). OrcaSlicer 2.4+ drops that check (Preset.cpp:4481-4507@v2.5.0); there such a preset
+ * keeps its own row here, which only shows one row more.
+ */
+export function markFamilyCopies(details: ReadonlyMap<UserPreset, CompatDetail>): void {
+  const families = new Map<string, { preset: UserPreset; detail: CompatDetail }[]>();
+  const held = new Map<string, Set<string>>();
+  const ordered = [...details].sort(([a], [b]) => byFileName(a.fileStem, b.fileStem));
+  for (const [preset, detail] of ordered) {
+    const alias = customFilamentAlias(preset);
+    if (alias === null) continue;
+    const printers = held.get(alias) ?? new Set<string>();
+    if (detail.printers.some((p) => printers.has(p))) continue;
+    for (const p of detail.printers) printers.add(p);
+    held.set(alias, printers);
+    const members = families.get(alias) ?? [];
+    members.push({ preset, detail });
+    families.set(alias, members);
+  }
+  for (const [alias, members] of families) {
+    const usable = members
+      .map((m) => m.detail)
+      .filter(isUsable)
+      .sort((a, b) => USABLE_RANK[a.state] - USABLE_RANK[b.state])[0];
+    if (!usable) continue;
+    const copy = members.find((m) => m.detail === usable)!.preset.fileStem;
+    for (const { detail } of members) {
+      if (!isUnsupported(detail)) continue;
+      const family: CompatFamily = { alias, copy, copyState: usable.state };
+      if (usable.state === 'other-printer')
+        family.copyPrinters = [...(usable.matchedPrinters ?? [])];
+      detail.family = family;
+    }
+  }
 }
 
 export interface CompatSetup {

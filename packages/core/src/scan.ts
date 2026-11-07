@@ -3,7 +3,13 @@
  * account's presets of every type and the slicer's conf (BambuStudio.conf / OrcaSlicer.conf),
  * runs every rule and summarizes each preset as a table row. Only reads; never writes.
  */
-import { compatSetup, effectiveCompat, judgeCompat, type CompatInputs } from './compat.js';
+import {
+  compatSetup,
+  effectiveCompat,
+  judgeCompat,
+  markFamilyCopies,
+  type CompatInputs,
+} from './compat.js';
 import { readSlicerConf, type SlicerConf } from './conf.js';
 import type { PresetFs } from './fs.js';
 import { buildUserIndex, chain, userInherits, type ResolveContext } from './resolve.js';
@@ -14,6 +20,7 @@ import { rewordFinding, TEMPLATE_PARENT_TITLE } from './rules/r1Common.js';
 import {
   compatFinding,
   compatReason,
+  familyCopiesFinding,
   notForSelectionFinding,
   type OtherSelectionItem,
 } from './rules/r2r3.js';
@@ -213,14 +220,16 @@ export async function scan(fs: PresetFs, options: ScanOptions = {}): Promise<Sca
         },
         profile,
       );
-      if (f) own.push(f);
+      // A copy's note goes first, so it is the row's reason over an R4 note of the same rank.
+      if (f?.status === 'info') own.unshift(f);
+      else if (f) own.push(f);
     }
     findings.push(...own);
     const summary = summarize(preset, own, indexes.byType[preset.type] !== null, profile);
     if (detail) summary.compat = detail;
     summaries.push(summary);
   }
-  if (compat.note) findings.push(compat.note);
+  findings.push(...compat.notes);
 
   // The filament index's warnings as before, then the others' new ones.
   const filamentWarnings = system?.warnings ?? [];
@@ -268,7 +277,8 @@ async function compatPass(args: {
 }): Promise<{
   context: CompatContext;
   details: Map<UserPreset, CompatDetail>;
-  note: Finding | null;
+  /** The grouped notes: presets for another added printer, and copies of a custom filament. */
+  notes: Finding[];
 }> {
   const { profile, indexes, presets, ownFindings, resolves } = args;
   const blocked = new Set(
@@ -288,7 +298,7 @@ async function compatPass(args: {
   });
   const details = new Map<UserPreset, CompatDetail>();
   const inputs = setup.inputs;
-  if (!inputs) return { context: setup.context, details, note: null };
+  if (!inputs) return { context: setup.context, details, notes: [] };
 
   const items: OtherSelectionItem[] = [];
   for (const preset of presets) {
@@ -311,7 +321,19 @@ async function compatPass(args: {
     }
   }
   const note = notForSelectionFinding(items, { otherNozzle: otherNozzle(items, inputs) }, profile);
-  return { context: setup.context, details, note };
+  // Copies of a custom filament whose family has a copy for an added printer: one name in the
+  // slicer, so they go in their own grouped note instead of being reported as unsupported.
+  markFamilyCopies(details);
+  const copies = presets.flatMap((p) => {
+    const family = details.get(p)?.family;
+    return family ? [{ name: displayName(p), family }] : [];
+  });
+  const copiesNote = familyCopiesFinding(copies, setup.context, profile);
+  return {
+    context: setup.context,
+    details,
+    notes: [...(note ? [note] : []), ...(copiesNote ? [copiesNote] : [])],
+  };
 }
 
 /** A file with "instantiation": "false": Studio loads it, but never shows it. */

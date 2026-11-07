@@ -23,6 +23,11 @@ export const RULE_IDS = {
   nozzleNotAdded: 'R3_NOZZLE_NOT_ADDED',
   /** R3, grouped: presets for another added printer or process. One scan-level note. */
   notForSelection: 'R3_NOT_FOR_SELECTION',
+  /**
+   * R2/R3, grouped: copies of a custom filament (one name in the slicer) with another copy that
+   * is offered for an added printer. One scan-level note; each copy has a note of its own.
+   */
+  familyCopies: 'R2_FAMILY_COPIES',
   malformed: 'R4_MALFORMED',
   cloudSync: 'R5_CLOUD_SYNC',
 } as const;
@@ -65,7 +70,10 @@ export interface Finding {
   /** Root-relative path of the preset JSON (or of BambuStudio.conf for scan-level findings). */
   presetPath: string;
   presetName?: string;
-  /** The preset's type. Absent on scan-level findings (R5, R3_NOT_FOR_SELECTION). */
+  /**
+   * The preset's type. Absent on scan-level findings (R5, R3_NOT_FOR_SELECTION,
+   * R2_FAMILY_COPIES).
+   */
   presetType?: PresetType;
   status: PresetStatus;
   /** Short headline, e.g. "Parent preset is missing". */
@@ -226,6 +234,28 @@ export interface CompatDetail {
   process?: 'mismatch' | 'cant-tell';
   /** 'cant-tell': why. */
   why?: 'condition' | 'opaque';
+  /**
+   * An R2/R3 verdict of a custom filament copy whose family has another copy that is offered
+   * for an added printer. The slicer lists the family under one name, so this copy is counted in
+   * the R2_FAMILY_COPIES note, and its own finding is a note ('info'), not 'unsupported'.
+   */
+  family?: CompatFamily;
+}
+
+/**
+ * Custom filaments that the slicer lists under one name, the part of their name before "@"
+ * (set_custom_preset_alias, src/libslic3r/Preset.cpp:3470-3490@v02.09.01.70). "Create filament"
+ * makes one such copy per printer (clone_presets_for_printer, Preset.cpp:2603-2616).
+ */
+export interface CompatFamily {
+  /** The name the slicer shows for the family. */
+  alias: string;
+  /** The copy that is offered for an added printer: its file name, its name in the slicer. */
+  copy: string;
+  /** That copy's verdict. */
+  copyState: 'selected' | 'all' | 'other-printer';
+  /** 'other-printer': the added printers that copy is for. */
+  copyPrinters?: string[];
 }
 
 export interface CompatContext {

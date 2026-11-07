@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Finding, PresetType } from '@preset-doctor/core';
+import type { Finding, PresetSummary, PresetType, ScanResult } from '@preset-doctor/core';
 import type { AppConfig, PlanPayload, ScanPayload, StudioState } from './contract';
 import { api, AppError, call, messageOf } from './api';
 import { BackupsDialog } from './components/BackupsDialog';
@@ -8,7 +8,7 @@ import { FindingsTable } from './components/FindingsTable';
 import { FixBar } from './components/FixBar';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
-import { PrintersStrip } from './components/PrintersStrip';
+import { PrintersStrip, type StripNote } from './components/PrintersStrip';
 import { ReviewDialog } from './components/ReviewDialog';
 import { CopyBack } from './components/web/CopyBack';
 import { StudioConfirm } from './components/web/StudioConfirm';
@@ -16,10 +16,13 @@ import { WebGuide } from './components/web/WebGuide';
 import {
   choiceFor,
   cloudSyncFinding,
+  COMPAT_COPIES_QUERY,
   COMPAT_OTHER_QUERY,
   countByStatus,
   countByType,
   defaultTab,
+  familyCopies,
+  familyCopiesFinding,
   findingsByPath,
   fixesFor,
   forOtherSelection,
@@ -191,6 +194,7 @@ export function App() {
   const counts = payload ? countByStatus(payload.result) : null;
   const cloud = payload ? cloudSyncFinding(payload.result) : undefined;
   const otherNote = payload ? notForSelectionFinding(payload.result) : undefined;
+  const copiesNote = payload ? familyCopiesFinding(payload.result) : undefined;
   // The scan's slicer; before a scan, the slicer whose default folder is shown (desktop).
   const rootSlicer = slicerOfRoot(config?.slicers ?? [], root);
   const slicer = SLICER_TEXT[payload?.result.slicer ?? rootSlicer ?? 'bambu'];
@@ -199,12 +203,12 @@ export function App() {
   const slicerName = slicer.name;
   const unreadTypes = payload ? unreadIndexTypes(payload.result) : [];
   const partialIndex = partialIndexText(unreadTypes, slicer.name);
-  /** "Show them" on the grouped note: every such row, on a tab that has some. */
-  const showOtherSelection = (): void => {
+  /** "Show them" on a grouped note: every row it counts, on a tab that has some. */
+  const showRows = (query: string, rows: (r: ScanResult) => PresetSummary[]): void => {
     if (!payload) return;
-    const types = forOtherSelection(payload.result).map(typeOf);
+    const types = rows(payload.result).map(typeOf);
     setFilter('all');
-    setSearch(COMPAT_OTHER_QUERY);
+    setSearch(query);
     if (types.length > 0 && !types.includes(tab)) {
       setTab(types[0]!);
       setSelectedPath(null);
@@ -474,8 +478,28 @@ export function App() {
             <PrintersStrip
               compat={payload.result.compat}
               slicer={slicerName}
-              note={otherNote}
-              onShowNote={showOtherSelection}
+              notes={
+                [
+                  ...(otherNote
+                    ? [
+                        {
+                          finding: otherNote,
+                          onShow: () => showRows(COMPAT_OTHER_QUERY, forOtherSelection),
+                          testId: 'other-printer-note',
+                        },
+                      ]
+                    : []),
+                  ...(copiesNote
+                    ? [
+                        {
+                          finding: copiesNote,
+                          onShow: () => showRows(COMPAT_COPIES_QUERY, familyCopies),
+                          testId: 'family-copies-note',
+                        },
+                      ]
+                    : []),
+                ] satisfies StripNote[]
+              }
             />
           )}
           {payload && counts && (

@@ -886,6 +886,24 @@ const UNSUPPORTED_USER: TypedUser[] = [
     extra: { compatible_printers: [] },
     expect: 'the name rule gives `Bambu Lab H2D 0.4 nozzle`, so R2 `printer-not-added`',
   },
+  // Two copies of one custom filament, as "Create filament" makes them: Studio lists both as
+  // "My PETG", so the H2D copy is a note in the copies note, not an unsupported row.
+  {
+    type: 'filament',
+    file: 'base/My PETG @Bambu Lab X2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL X2D 0.4 nozzle',
+    extra: { compatible_printers: ['Bambu Lab X2D 0.4 nozzle'] },
+    expect: '`selected`, no finding; the copy of "My PETG" for the added printer',
+  },
+  {
+    type: 'filament',
+    file: 'base/My PETG @Bambu Lab H2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL H2D',
+    extra: { compatible_printers: ['Bambu Lab H2D 0.4 nozzle'] },
+    expect:
+      'R2 `printer-not-added` with `family` (copy `My PETG @Bambu Lab X2D 0.4 nozzle`): ' +
+      'an info note, counted in the copies note',
+  },
   {
     type: 'machine',
     file: 'My X2D',
@@ -1265,8 +1283,9 @@ compatibility keys below added as their own settings:
 
 ${unsupportedTable()}
 
-Expected: 4 unsupported (2 R2 filament, 1 R2 and 1 R3 process), 6 OK; no warnings. One
-scan-level R3_NOT_FOR_SELECTION note counts 1 filament (other process) and 2 process presets.
+Expected: 4 unsupported (2 R2 filament, 1 R2 and 1 R3 process), 1 OK with notes (the H2D copy
+of "My PETG"), 7 OK; no warnings. One scan-level R3_NOT_FOR_SELECTION note counts 1 filament
+(other process) and 2 process presets; one scan-level R2_FAMILY_COPIES note counts that copy.
 `;
 fs.writeFileSync(path.join(outRoot, 'README.md'), readme, 'utf8');
 

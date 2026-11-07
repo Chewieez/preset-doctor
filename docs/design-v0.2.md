@@ -695,7 +695,9 @@ hidden in others:
 
 R1 and R4 already cover presets that aren't loaded at all. R2/R3 explain the loaded ones. The
 live data has 46 filaments and 1 process that suit only printers that haven't been added (R2),
-plus 80 presets that suit another printer that has been added (R3b).
+plus 80 presets that suit another printer that has been added (R3b). All 46 filaments turned
+out to be per-printer copies of custom filaments that Studio lists under one name, each group
+with a copy for an added printer; §5.10 makes them a grouped note instead of Unsupported rows.
 
 ### 5.2 Conf inputs: `conf.ts`
 
@@ -879,6 +881,7 @@ fixture. The UI and CLI show one muted line, described in §5.7.
 | `other-printer`, or `process: 'mismatch'` | `summary.compat` only | unchanged | counted in one scan-level `R3_NOT_FOR_SELECTION` |
 | `nozzle-not-added` | Finding | `unsupported` / `info` | `R3_NOZZLE_NOT_ADDED` |
 | `printer-not-added`, `unknown-printers`, `other-vendor` | Finding | `unsupported` / `info` | `R2_PRINTER_NOT_ADDED` |
+| any R2/R3 verdict with `family` (§5.10) | Finding (a note) | `info` / `info` | `R2_PRINTER_NOT_ADDED` or `R3_NOZZLE_NOT_ADDED`, counted in one scan-level `R2_FAMILY_COPIES` |
 
 - **Status rank.** `STATUS_RANK` becomes ok 0, info 1, unsupported 2, hidden 3, broken 4. The UI's
   `STATUS_ORDER` becomes hidden, broken, unsupported, info, ok.
@@ -931,6 +934,13 @@ the profile. `<where>` depends on the type:
 > "... It is based on <vendor>'s presets, and <Studio> only offers those for <vendor> printers.
 > Your printers that fit its list use another profile (for example a printer you created
 > yourself)."
+
+With no printer list (every added printer is of another vendor), that second sentence would be
+wrong, so it reads instead:
+
+> "... It is based on <vendor>'s presets and has no printer list of its own, so <Studio> offers
+> it for every printer that uses a <vendor> profile. None of the printers you've added uses one
+> (a printer you created yourself, for example, has no brand profile)."
 
 **R3 (`nozzle-not-added`)**
 
@@ -1106,7 +1116,75 @@ Where the code differs from §5.1 to §5.8, this list is the contract.
   (`0.16mm ... H2D`-based) R2, no R3, 77 filaments and 2 processes in the grouped note (one of them
   for the X2D 0.6 nozzle, so the multi-nozzle sentence shows), 18 hidden (R1) not judged. Account B:
   its 3 processes are all in the note, its 18 filaments are R1 orphans. `npm run test:live` adds a
-  structural check (`compat.test.ts`), not these counts.
+  structural check (`compat.test.ts`), not these counts. After §5.10, account A has 1 R2 row
+  that needs attention: the process.
+
+### 5.10 Copies of one custom filament (after step 2)
+
+**Problem.** On the live data (account A) R2 marked 46 filaments Unsupported, each its own row
+needing attention. All 46 are per-printer copies, in 13 groups that share the name before "@",
+and every group has a copy that is `selected` for an added printer. Studio shows each group as
+one entry, so 46 "Unsupported" rows buried the 18 hidden presets the user has to act on.
+
+**What Studio does** (`@v02.09.01.70`):
+
+- "Create filament" clones the template once per printer: `clone_presets_for_printer`
+  (`libslic3r/Preset.cpp:2603-2616`) names each copy `<prefix> @<printer>` (prefix: the name up
+  to " @") with `compatible_printers = [<printer>]`; `clone_presets` clears `inherits` (`:2562`)
+  and sets the alias (`:2585-2586`).
+- `set_custom_preset_alias` (`:3470-3490`) gives an alias only to a **user filament** preset
+  whose `inherits` is empty: the name (the file name, `:1455`) up to the first `@`, trailing
+  spaces trimmed. No `@`, or nothing before it: no alias. It runs at load (`:1567`), after the
+  name rule (`:1549-1559`). The alias is **not** set when `is_alias_exist` (`:2975-2995`) finds
+  another preset with that alias already holding one of the printers in this preset's list
+  (`set_printer_hold_alias`, `:3493-3531`); that preset keeps its full name. System presets'
+  aliases hold no printers. Presets load in folder order (`:1449`).
+- The Plater list shows `Preset::label`, the alias when there is one (`:757-761`;
+  `PlaterPresetComboBox::get_preset_name`, `slic3r/GUI/PresetComboBoxes.cpp:1586-1589`). Its
+  groups are `std::map`s keyed by that label (`:1717-1729`), so a compatible copy puts the alias
+  under "User presets" and all incompatible copies together put it once, greyed out, under
+  "Unsupported presets" (`:1851`).
+- OrcaSlicer: the same rule for root filaments, without the user-preset test, in 2.3.2
+  (`libslic3r/Preset.cpp:3262-3282@v2.3.2`); 2.4+ drops the `is_alias_exist` test
+  (`:4481-4507@v2.5.0`).
+
+**The change.**
+
+- `customFilamentAlias` (`compat.ts`) mirrors the alias rule. `markFamilyCopies` groups the
+  judged presets by alias, in file name order (upper-cased, as Windows lists a folder), and leaves
+  out a preset that would hold a printer an earlier member holds (Studio gives it no alias). In
+  OrcaSlicer 2.4+ such a preset would be grouped; here it keeps its own row (one row more, never
+  one less).
+- A group with a member whose verdict is `selected`, `all` or `other-printer` (best first; a
+  process mismatch doesn't matter) has a **usable copy**. Each member with an R2/R3 verdict gets
+  `CompatDetail.family = { alias, copy, copyState, copyPrinters? }`.
+- Such a member's finding keeps its R2/R3 rule id but is a note (`status: 'info'`), so the row is
+  "OK, with notes", not needing attention. It goes first among the row's findings, so it is the
+  row's reason over an R4 note. Title: "A copy for a printer you haven't added" (R3: "A copy for a
+  nozzle size you haven't added"). Text: "<Studio> lists your custom filament presets
+  "<alias> @…" under one name, "<alias>". This copy is made for <printers>, which you haven't
+  added, so it only adds a greyed-out "<alias>" under "Unsupported presets". <source> The copy
+  "<copy>" is offered for the printer selected now, so "<alias>" in the list is that copy. Nothing
+  to do." (for `other-printer`: "... is offered for <printers>, which you've added; when you
+  select it, ..."). Reason: `Copy of "<alias>": <the R2/R3 reason>`.
+- One scan-level note, `R2_FAMILY_COPIES` (`presetPath` the conf, `info`), titled "Copies of
+  presets you already use on your printers": "N filament presets are copies of your custom
+  filament presets, made for printers or nozzles you haven't added; each group also has a copy
+  for a printer you've added (G groups: <up to 3 aliases>). <Studio> lists each group under one
+  name, the part before "@": the copy for the printer you select under "User presets", and the
+  copies for printers you haven't added only add that name, greyed out, under "Unsupported
+  presets". Nothing to do." With OrcaSlicer's group hidden, the end says they don't show unless
+  the developer setting is on.
+- A member without a usable copy stays `unsupported`; processes never have an alias.
+- **UI.** The note is a second banner under the printers line with its own "Show them" (search
+  text `compat:copies`: the rows with `compat.family`). **CLI.** It is printed as `Note: ...`
+  when filament presets are shown. The fixture gets two copies of "My PETG" (X2D, selected; H2D,
+  the copy).
+- **Live (read-only, temp copy, Nov 7, 2026).** Account A before: 46 filaments and 1 process
+  Unsupported, 4 filaments OK with notes. After: 1 process Unsupported (the H2D-only process), 50
+  filaments OK with notes (the 46 copies, in 13 groups, each with a `selected` copy for the X2D),
+  and the copies note. Account B: unchanged (no copies). Both still have 18 hidden filaments with
+  the same pre-selected high fixes.
 
 ---
 
