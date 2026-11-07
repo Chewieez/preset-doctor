@@ -1,0 +1,19 @@
+{
+    "bed_exclude_area": [
+        "0x0",
+        "18x0",
+        "18x28",
+        "0x28"
+    ],
+    "farthest_point_timelapse": "1",
+    "from": "User",
+    "inherits": "",
+    "name": "My Printer 0.4 nozzle",
+    "nozzle_diameter": [
+        "0.4"
+    ],
+    "printer_model": "My Printer",
+    "printer_settings_id": "My Printer 0.4 nozzle",
+    "printer_variant": "0.4",
+    "version": "2.8.0.6"
+}

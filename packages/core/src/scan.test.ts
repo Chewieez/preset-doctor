@@ -218,9 +218,9 @@ describe('scan on fixtures', () => {
   it('multi-account: defaults to the account with the most presets', async () => {
     const r = await scan(fixture('multi-account'));
     expect(r.accounts).toEqual([
-      { id: '1000000001', presetCount: 6 },
-      { id: '1000000002', presetCount: 3 },
-      { id: 'default', presetCount: 0 },
+      { id: '1000000001', presetCount: 6, byType: { filament: 6, process: 0, machine: 0 } },
+      { id: '1000000002', presetCount: 3, byType: { filament: 3, process: 0, machine: 0 } },
+      { id: 'default', presetCount: 0, byType: { filament: 0, process: 0, machine: 0 } },
     ]);
     expect(r.userId).toBe('1000000001');
     expect(r.findings).toEqual([]);
@@ -290,6 +290,110 @@ describe('scan on fixtures', () => {
   it('result is plain data (survives JSON, as IPC needs)', async () => {
     const r: ScanResult = await scan(fixture('broken-r1'));
     expect(JSON.parse(JSON.stringify(r))).toEqual(r);
+  });
+});
+
+/** types-bambu: file -> [type, status, pre-selected candidate or null], from the fixture README. */
+const TYPES_EXPECTED: Record<string, [string, string, string | null]> = {
+  'filament/My PLA.json': ['filament', 'ok', null],
+  'process/0.20mm Standard @BBL X1C - Copy.json': ['process', 'ok', null],
+  'process/Case Only.json': ['process', 'hidden', '0.20mm Standard @BBL X1C'],
+  'process/Added Suffix.json': ['process', 'hidden', '0.20mm Standard @BBL X2D'],
+  'process/Old Profile Word.json': ['process', 'hidden', null],
+  'process/Old Code.json': ['process', 'hidden', null],
+  'process/No Candidates.json': ['process', 'hidden', null],
+  'process/Template Parent.json': ['process', 'hidden', null],
+  'process/Name Mismatch.json': ['process', 'info', null],
+  'machine/Bambu Lab X1 Carbon 0.4 nozzle - Copy.json': ['machine', 'ok', null],
+  'machine/Case Only Printer.json': ['machine', 'hidden', null],
+  'machine/Old Model Name.json': ['machine', 'hidden', null],
+  'machine/base/My Printer 0.4 nozzle.json': ['machine', 'ok', null],
+};
+
+describe('scan on the process and printer fixture', () => {
+  it('types-bambu: every type is checked against its own system presets', async () => {
+    const r = await scan(fixture('types-bambu'));
+    expect(r.slicer).toBe('bambu');
+    expect(r.warnings).toEqual([]);
+    expect(r.indexesRead).toEqual({ filament: true, process: true, machine: true });
+    expect(r.systemIndexRead).toBe(true);
+    expect(r.countsByType).toEqual({ filament: 1, process: 8, machine: 4 });
+    expect(r.accounts[0]).toMatchObject({
+      presetCount: 13,
+      byType: { filament: 1, process: 8, machine: 4 },
+    });
+    const rel = (p: string) => p.slice('user/1000000001/'.length);
+    const got = Object.fromEntries(
+      r.presets.map((p) => {
+        const f = r.findings.find((x) => x.presetPath === p.path && x.ruleId === R1_ID);
+        return [rel(p.path), [p.type, p.status, f ? preselected(f) : null]];
+      }),
+    );
+    expect(got).toEqual(TYPES_EXPECTED);
+    for (const f of r.findings) {
+      expect(f.presetType).toBe(r.presets.find((p) => p.path === f.presetPath)?.type);
+    }
+  });
+
+  it('types-bambu: process and printer findings read plainly', async () => {
+    const r = await scan(fixture('types-bambu'));
+    const find = (file: string, rule: string = R1_ID) =>
+      r.findings.find((f) => f.presetPath.endsWith(file) && f.ruleId === rule);
+    const template = find('/Template Parent.json');
+    expect(template?.explanation).toContain(
+      'This preset is based on "fdm_process_common", which is an internal template in Bambu ' +
+        "Studio's system presets (version 02.08.00.06) that presets can't be based on, so " +
+        'Studio hides it.',
+    );
+    expect(template?.proposedFix).toBeUndefined();
+    const printer = find('/Case Only Printer.json');
+    const cs = printer?.proposedFix?.kind === 'setInherits' ? printer.proposedFix.candidates : [];
+    expect(cs[0]).toMatchObject({ name: 'Bambu Lab X1 Carbon 0.4 nozzle', confidence: 'high' });
+    expect(cs.every((c) => !c.preselected)).toBe(true);
+    expect(printer?.explanation).toContain('Preset Doctor never picks a printer for you');
+    const rename = find('/Name Mismatch.json', R4_ID);
+    expect(rename?.proposedFix).toMatchObject({ kind: 'renamePreset', newName: 'Name Mismatch' });
+    const base = r.presets.find((p) => p.path.endsWith('/My Printer 0.4 nozzle.json'));
+    expect(base?.reason).toBe('Custom printer, not based on another preset');
+  });
+
+  it('a preset type whose system index is unreadable is not checked, with a warning', async () => {
+    const fs = memFs({
+      'system/BBL.json': JSON.stringify({
+        name: 'Bambulab',
+        version: '01.02.03.04',
+        filament_list: [],
+        process_list: 'broken',
+      }),
+      'user/1000000001/process/P.json': JSON.stringify({
+        from: 'User',
+        inherits: 'Gone @BBL X1C',
+        name: 'P',
+        print_settings_id: 'P',
+      }),
+    });
+    const r = await scan(fs);
+    expect(r.indexesRead).toEqual({ filament: true, process: false, machine: true });
+    expect(r.systemIndexRead).toBe(false);
+    expect(r.warnings).toEqual([
+      'system/BBL.json has no "process_list" list. Process presets based on system presets ' +
+        "can't be checked.",
+    ]);
+    expect(r.findings.filter((f) => f.ruleId === R1_ID)).toEqual([]);
+  });
+
+  it('a filament based on an "@base" template is hidden, as Studio hides it', async () => {
+    const fs = fakeStudio(
+      [
+        { name: 'Generic PLA @base', instantiation: 'false' },
+        { name: 'Generic PLA @BBL X2D', inherits: 'Generic PLA @base' },
+      ],
+      [{ name: 'Mine', inherits: 'Generic PLA @base' }],
+    );
+    const r = await scan(fs);
+    const f = r.findings.find((x) => x.ruleId === R1_ID);
+    expect(f).toMatchObject({ status: 'hidden', presetType: 'filament' });
+    expect(f?.explanation).toContain('is an internal template');
   });
 });
 

@@ -1,0 +1,31 @@
+{
+    "bridge_speed": [
+        "50",
+        "50",
+        "50",
+        "50",
+        "200",
+        "200"
+    ],
+    "default_acceleration": [
+        "10000",
+        "10000",
+        "10000",
+        "1000",
+        "1000",
+        "1000"
+    ],
+    "enable_overhang_speed": [
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0"
+    ],
+    "from": "User",
+    "inherits": "0.33mm Weird @BBL ZZZ",
+    "name": "No Candidates",
+    "print_settings_id": "No Candidates",
+    "version": "2.8.0.6"
+}

@@ -1,0 +1,9 @@
+{
+    "filename_format": "ECC_{nozzle_diameter[0]}_{input_filename_base}_{filament_type[0]}{layer_height}_{print_time}.gcode",
+    "from": "User",
+    "inherits": "0.30mm Standard @Elegoo CC 0.6 nozzle",
+    "name": "CC 06 Copy",
+    "print_settings_id": "CC 06 Copy",
+    "sparse_infill_pattern": "zig-zag",
+    "version": "2.3.2.0"
+}

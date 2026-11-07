@@ -13,7 +13,9 @@ export function Footer({ version, donationUrl, onRestore }: Props) {
         Restore a backup…
       </button>
       <span className="footer-note">No data leaves your computer.</span>
-      <span className="footer-note">Not affiliated with or endorsed by Bambu Lab.</span>
+      <span className="footer-note">
+        Not affiliated with or endorsed by Bambu Lab or the OrcaSlicer project.
+      </span>
       <span className="footer-spacer" />
       {donationUrl !== '' && (
         <button

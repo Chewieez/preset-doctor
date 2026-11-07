@@ -1,0 +1,48 @@
+{
+    "name": "Custom Printer",
+    "version": "02.03.02.50",
+    "force_update": "0",
+    "description": "My configurations",
+    "machine_model_list": [],
+    "process_list": [],
+    "filament_list": [
+        {
+            "name": "Generic ABS @MyToolChanger",
+            "sub_path": "filament/Generic ABS @MyToolChanger.json"
+        },
+        {
+            "name": "Generic PLA @MyToolChanger",
+            "sub_path": "filament/Generic PLA @MyToolChanger.json"
+        }
+    ],
+    "machine_list": [
+        {
+            "name": "fdm_machine_common",
+            "sub_path": "machine/fdm_machine_common.json"
+        },
+        {
+            "name": "fdm_klipper_common",
+            "sub_path": "machine/fdm_klipper_common.json"
+        },
+        {
+            "name": "fdm_toolchanger_common",
+            "sub_path": "machine/fdm_toolchanger_common.json"
+        },
+        {
+            "name": "MyToolChanger 0.2 nozzle",
+            "sub_path": "machine/MyToolChanger 0.2 nozzle.json"
+        },
+        {
+            "name": "MyToolChanger 0.4 nozzle",
+            "sub_path": "machine/MyToolChanger 0.4 nozzle.json"
+        },
+        {
+            "name": "MyToolChanger 0.6 nozzle",
+            "sub_path": "machine/MyToolChanger 0.6 nozzle.json"
+        },
+        {
+            "name": "MyToolChanger 0.8 nozzle",
+            "sub_path": "machine/MyToolChanger 0.8 nozzle.json"
+        }
+    ]
+}

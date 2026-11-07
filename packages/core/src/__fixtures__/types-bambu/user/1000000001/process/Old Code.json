@@ -1,0 +1,14 @@
+{
+    "default_acceleration": [
+        "6000"
+    ],
+    "elefant_foot_compensation": "0",
+    "from": "User",
+    "inherits": "0.20mm Standard @BBL N1",
+    "name": "Old Code",
+    "print_settings_id": "Old Code",
+    "travel_speed": [
+        "700"
+    ],
+    "version": "2.8.0.6"
+}

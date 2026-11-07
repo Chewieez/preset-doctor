@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { StudioState } from '../contract';
+import { useSlicer } from '../slicerContext';
 
 interface Props {
   count: number;
@@ -13,16 +14,17 @@ interface Props {
 }
 
 export function FixBar({ count, studio, busy, confirmToWrite, studioGate, onFix }: Props) {
+  const { name } = useSlicer();
   const blocked =
     studio === 'closed'
       ? null
       : confirmToWrite
-        ? 'Close Bambu Studio, then tick the box to repair presets.'
+        ? `Close ${name}, then tick the box to repair presets.`
         : studio === 'running'
-          ? 'Close Bambu Studio to repair presets. Preset Doctor notices within a few seconds.'
+          ? `Close ${name} to repair presets. Preset Doctor notices within a few seconds.`
           : studio === 'unknown'
-            ? "Repairs are off because Preset Doctor can't tell whether Bambu Studio is running."
-            : 'Checking whether Bambu Studio is running…';
+            ? `Repairs are off because Preset Doctor can't tell whether ${name} is running.`
+            : `Checking whether ${name} is running…`;
   return (
     <div className="fixbar" data-testid="fixbar">
       <div className="fixbar-text">

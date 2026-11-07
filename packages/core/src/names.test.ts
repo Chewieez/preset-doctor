@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 import {
   isBaseName,
   isTemplateName,
+  looseName,
   modelAbbreviations,
   modelMatchesCode,
   parseCompatiblePrinter,
   parsePresetName,
+  parseProcessName,
   sameNozzle,
   toggleDefaultNozzleSuffix,
 } from './names.js';
@@ -161,6 +163,37 @@ function expectAllParse(names: string[]): void {
   }
   expect(bad).toEqual([]);
 }
+
+describe('parseProcessName', () => {
+  it.each([
+    ['0.20mm Standard @BBL X1C', { layer: '0.20', profile: 'Standard', tag: 'BBL X1C' }],
+    [
+      '0.24mm Balanced Quality @BBL P2S 0.6 nozzle',
+      { layer: '0.24', profile: 'Balanced Quality', tag: 'BBL P2S', nozzle: '0.6' },
+    ],
+    ['0.08mm Extra Fine @BBL H2D', { layer: '0.08', profile: 'Extra Fine', tag: 'BBL H2D' }],
+    ['1mm Draft @Elegoo CC', { layer: '1', profile: 'Draft', tag: 'Elegoo CC' }],
+  ])('%s', (name, expected) => {
+    expect(parseProcessName(name)).toEqual(expected);
+  });
+
+  it.each(['fdm_process_common', 'fdm_process_bbl_0.20', '0.20mm Standard', 'Standard @BBL X1C'])(
+    'rejects %s',
+    (name) => {
+      expect(parseProcessName(name)).toBeNull();
+    },
+  );
+});
+
+describe('looseName', () => {
+  it('ignores case, surrounding space and runs of spaces', () => {
+    expect(looseName('  0.20mm  Standard @BBL X1C ')).toBe('0.20mm standard @bbl x1c');
+    expect(looseName('Bambu Lab X1 carbon 0.4 nozzle')).toBe(
+      looseName('Bambu Lab X1 Carbon 0.4 nozzle'),
+    );
+    expect(looseName('a-b')).not.toBe(looseName('a b'));
+  });
+});
 
 describe('fixture system index names', () => {
   it.each(FIXTURE_NAMES)('%s: every filament_list name parses', (fixture) => {

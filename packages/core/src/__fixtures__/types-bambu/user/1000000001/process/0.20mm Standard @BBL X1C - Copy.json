@@ -1,0 +1,19 @@
+{
+    "bridge_speed": [
+        "50",
+        "50"
+    ],
+    "default_acceleration": [
+        "10000",
+        "10000"
+    ],
+    "enable_overhang_speed": [
+        "1",
+        "1"
+    ],
+    "from": "User",
+    "inherits": "0.20mm Standard @BBL X1C",
+    "name": "0.20mm Standard @BBL X1C - Copy",
+    "print_settings_id": "0.20mm Standard @BBL X1C - Copy",
+    "version": "2.8.0.6"
+}

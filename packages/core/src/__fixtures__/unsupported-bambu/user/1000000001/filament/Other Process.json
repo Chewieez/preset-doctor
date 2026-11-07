@@ -1,0 +1,26 @@
+{
+    "compatible_prints": [
+        "0.12mm Fine @BBL X2D"
+    ],
+    "eng_plate_temp": [
+        "55"
+    ],
+    "eng_plate_temp_initial_layer": [
+        "55"
+    ],
+    "filament_cooling_before_tower": [
+        "10",
+        "10",
+        "10",
+        "10",
+        "10",
+        "10"
+    ],
+    "filament_settings_id": [
+        "Other Process"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @BBL X2D 0.4 nozzle",
+    "name": "Other Process",
+    "version": "2.8.0.6"
+}

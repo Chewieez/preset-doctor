@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import type { Finding, PresetSummary } from '@preset-doctor/core';
 import type { PlannedChange } from '../contract';
 import {
   CLOUD_SYNC_RULE,
+  compatLines,
   displayName,
   hasFix,
   orderFindings,
@@ -23,6 +25,8 @@ interface Props {
   fixes: PresetFixes;
   selection: Selection;
   preview: Preview;
+  /** 'Bambu Studio' or 'OrcaSlicer', for the printer section. */
+  slicer?: string;
   onPick: (path: string, candidate: string | null) => void;
   onToggle: (path: string, checked: boolean) => void;
 }
@@ -33,6 +37,7 @@ export function DetailPanel({
   fixes,
   selection,
   preview,
+  slicer = 'Bambu Studio',
   onPick,
   onToggle,
 }: Props) {
@@ -63,11 +68,27 @@ export function DetailPanel({
         </p>
       ) : null}
 
-      {!main && <p>This preset looks fine. Bambu Studio should show it normally.</p>}
+      {!main && <p>This preset looks fine. {slicer} should show it normally.</p>}
       {main && (
         <section className="finding">
           <h3>{main.title}</h3>
           <p>{main.explanation}</p>
+        </section>
+      )}
+      {preset.compat && (
+        <section className="printers-section" data-testid="printers-section">
+          <h3>Printers</h3>
+          <ul>
+            {compatLines(preset.compat, slicer).map((l, i) => (
+              <li key={i}>{l}</li>
+            ))}
+          </ul>
+          {preset.status === 'unsupported' && (
+            <p className="muted">
+              Preset Doctor doesn't change which printers a preset is for: {slicer} keeps that list
+              itself. The explanation above says what to do in {slicer}.
+            </p>
+          )}
         </section>
       )}
 
@@ -90,6 +111,7 @@ export function DetailPanel({
                   {c.name} <ConfidenceBadge confidence={c.confidence} />
                 </span>
                 <span className="candidate-reason">{c.reason}</span>
+                {c.printers && c.printers.length > 0 && <PrinterList printers={c.printers} />}
               </span>
             </label>
           ))}
@@ -148,5 +170,36 @@ export function DetailPanel({
         </section>
       )}
     </aside>
+  );
+}
+
+/** How many printers a candidate lists before the rest fold into "+N more". */
+const PRINTERS_SHOWN = 3;
+
+/** The printers a candidate is for (process presets): the new parent decides them. */
+function PrinterList({ printers }: { printers: string[] }) {
+  const [open, setOpen] = useState(false);
+  const hidden = printers.length - PRINTERS_SHOWN;
+  const shown = open || hidden <= 0 ? printers : printers.slice(0, PRINTERS_SHOWN);
+  return (
+    <span className="candidate-printers" data-testid="candidate-printers">
+      For: {shown.join(', ')}
+      {hidden > 0 && !open && (
+        <>
+          {' '}
+          <button
+            type="button"
+            className="link-button"
+            onClick={(e) => {
+              // The list sits inside the candidate's label: don't pick the candidate.
+              e.preventDefault();
+              setOpen(true);
+            }}
+          >
+            +{hidden} more
+          </button>
+        </>
+      )}
+    </span>
   );
 }

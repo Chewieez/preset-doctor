@@ -1,45 +1,74 @@
 import type { AccountSummary } from '@preset-doctor/core';
-import type { Platform, StudioState } from '../contract';
+import type { Platform, SlicerFolder, StudioState } from '../contract';
 import { accountLabel } from '../model';
+import { useSlicer } from '../slicerContext';
 import { StudioPill } from './Badges';
 import { DesktopAppLink } from './web/DesktopAppLink';
 
 interface Props {
   platform: Platform;
   root: string;
+  /** Desktop: each slicer's default folder. A switch is shown when both exist. */
+  slicers: SlicerFolder[];
   accounts: AccountSummary[];
   userId: string | undefined;
   studio: StudioState | 'checking';
   busy: boolean;
   onChangeFolder: () => void;
   onChangeAccount: (id: string) => void;
+  /** Scans that slicer's default folder. */
+  onSwitchSlicer: (root: string) => void;
 }
 
 export function Header({
   platform,
   root,
+  slicers,
   accounts,
   userId,
   studio,
   busy,
   onChangeFolder,
   onChangeAccount,
+  onSwitchSlicer,
 }: Props) {
   const web = platform === 'web';
+  const slicer = useSlicer();
+  const installed = slicers.filter((s) => s.exists);
   return (
     <header className="header">
       <div className="brand">
         <img className="logo" src="./icon.png" alt="" width={36} height={36} />
         <div>
           <h1>Preset Doctor</h1>
-          <p className="tagline">Brings back filament presets that Bambu Studio lost track of</p>
+          <p className="tagline">
+            Brings back presets that Bambu Studio or OrcaSlicer lost track of
+          </p>
         </div>
         {web ? <DesktopAppLink /> : <StudioPill state={studio} />}
       </div>
+      {!web && installed.length === 2 && (
+        <div className="segmented slicer-switch" role="group" aria-label="Slicer">
+          {installed.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={slicer.id === s.id}
+              disabled={busy}
+              onClick={() => {
+                if (slicer.id !== s.id) onSwitchSlicer(s.root);
+              }}
+              data-testid={`slicer-${s.id}`}
+            >
+              {s.displayName}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="header-row">
         <div className="field grow">
           <span className="field-label">
-            {web ? 'Your copy of the Bambu Studio folder' : 'Bambu Studio folder'}
+            {web ? `Your copy of the ${slicer.name} folder` : `${slicer.name} folder`}
           </span>
           <div className="folder">
             <code className="path" data-testid="root-path" title={root}>

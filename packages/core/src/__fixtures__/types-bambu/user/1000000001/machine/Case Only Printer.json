@@ -1,0 +1,17 @@
+{
+    "bed_exclude_area": [
+        "0x0",
+        "18x0",
+        "18x28",
+        "0x28"
+    ],
+    "farthest_point_timelapse": "1",
+    "from": "User",
+    "inherits": "Bambu Lab X1 carbon 0.4 nozzle",
+    "name": "Case Only Printer",
+    "nozzle_diameter": [
+        "0.4"
+    ],
+    "printer_settings_id": "Case Only Printer",
+    "version": "2.8.0.6"
+}

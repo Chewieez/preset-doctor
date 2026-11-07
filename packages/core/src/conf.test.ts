@@ -75,3 +75,53 @@ describe('parseStudioConf', () => {
     expect(parseStudioConf('').syncUserPreset).toBeUndefined();
   });
 });
+
+describe('parseStudioConf: printers', () => {
+  const text = (v: unknown) => JSON.stringify(v) + TRAILER;
+
+  it('reads the selected printer and process and the added models', () => {
+    const conf = parseStudioConf(
+      text({
+        app: { sync_user_preset: false },
+        models: [
+          { vendor: 'BBL', model: 'Bambu Lab X2D', nozzle_diameter: '0.2;0.4;0.6;0.8' },
+          { vendor: 'BBL', model: 'Bambu Lab P1S', nozzle_diameter: '0.4' },
+        ],
+        presets: {
+          machine: 'Bambu Lab X2D 0.4 nozzle',
+          process: '0.20mm Standard @BBL X2D.ini',
+          filaments: ['Generic PLA @BBL X2D 0.4 nozzle'],
+        },
+        access_code: { secret: 'never read' },
+      }),
+    );
+    expect(conf).toEqual({
+      found: true,
+      syncUserPreset: false,
+      selectedPrinter: 'Bambu Lab X2D 0.4 nozzle',
+      selectedProcess: '0.20mm Standard @BBL X2D',
+      enabledModels: [
+        { vendor: 'BBL', model: 'Bambu Lab X2D', nozzles: ['0.2', '0.4', '0.6', '0.8'] },
+        { vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] },
+      ],
+    });
+  });
+
+  it('keeps an empty models list, and skips odd shapes', () => {
+    expect(parseStudioConf(text({ app: {}, models: [] })).enabledModels).toEqual([]);
+    const odd = parseStudioConf(
+      text({ app: {}, models: [{ vendor: 'BBL' }, 'x', { model: 'M' }], presets: [] }),
+    );
+    expect(odd.enabledModels).toEqual([{ vendor: '', model: 'M', nozzles: [] }]);
+    expect(odd.selectedPrinter).toBeUndefined();
+    const notList = parseStudioConf(text({ app: {}, models: {}, presets: { machine: 3 } }));
+    expect(notList.enabledModels).toBeUndefined();
+    expect(notList.selectedPrinter).toBeUndefined();
+  });
+
+  it('reads no printers from a damaged file', () => {
+    const conf = parseStudioConf('{"models": [{"vendor": "BBL", "model": "X"}], "app": {');
+    expect(conf.error).toMatch(/not valid JSON/);
+    expect(conf.enabledModels).toBeUndefined();
+  });
+});

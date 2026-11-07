@@ -18,14 +18,24 @@ npm run icon -w apps/desktop   # regenerate build/icon.* and the other icon copi
   `packages/ui/src/contract.ts`; `src/shared/api.ts` adds the IPC channel names).
 - `src/renderer/`: just `index.html` (strict CSP), the icon and an entry that mounts the shared UI
   from `packages/ui`, the same screen the web version (`apps/web`) uses. The UI never touches files.
-- `e2e/smoke.mts`: drives the built app with playwright-core on a temp copy of the `broken-r1` fixture.
+- `e2e/smoke.mts`: drives the built app with playwright-core on a temp copy of the `broken-r1` fixture,
+  and switches between temp copies of a Bambu Studio and an OrcaSlicer fixture.
 
 Core and the UI are bundled from source (see `electron.vite.config.ts`), so the packaged app ships no
 `node_modules` and never picks up a stale `packages/core/dist`.
 
+## Two slicers
+
+The app knows both default folders, `%APPDATA%\BambuStudio` and `%APPDATA%\OrcaSlicer`. It starts on
+Bambu Studio's (OrcaSlicer's when Bambu Studio isn't installed) and shows a **Bambu Studio |
+OrcaSlicer** switch in the header when both exist; switching scans the other folder. A folder's
+files decide which slicer it is (`detectSlicer` in core), for picked folders too.
+
 ## Safety
 
-- Every write is refused while Bambu Studio is running, or when the process check fails.
+- Every write is refused while the folder's slicer is running (`bambu-studio.exe` or
+  `orca-slicer.exe`; both when the files don't tell), or when the process check fails.
+- Each backup records its slicer, and a restore into the other slicer's folder is refused.
 - One backup zip of the whole `user\` folder is made per session (and per folder) before the first write.
 - `apply` takes a plan id. The main process keeps the exact edits it previewed, so the UI can't
   change what gets written.
@@ -36,9 +46,10 @@ Core and the UI are bundled from source (see `electron.vite.config.ts`), so the 
 
 | Variable | Effect |
 |---|---|
-| `PRESET_DOCTOR_ROOT` | Folder to open instead of `%APPDATA%\BambuStudio` |
+| `PRESET_DOCTOR_ROOT` | Folder to open instead of `%APPDATA%\BambuStudio` (a folder of either slicer) |
 | `PRESET_DOCTOR_BACKUPS` | Backups folder instead of `%APPDATA%\PresetDoctor\backups` |
-| `PRESET_DOCTOR_FAKE_STUDIO_RUNNING` | `0` or `1` replaces the Studio process check, only for writes to `PRESET_DOCTOR_ROOT` (never a folder picked later). Ignored unless `PRESET_DOCTOR_ROOT` is set to a folder other than the real Studio folder. The app shows a test-mode banner |
+| `PRESET_DOCTOR_FAKE_STUDIO_RUNNING` | `0` or `1` replaces the Studio process check, only for writes to `PRESET_DOCTOR_ROOT` (never a folder picked later). Ignored unless `PRESET_DOCTOR_ROOT` is set to a folder other than the real Bambu Studio and OrcaSlicer folders. The app shows a test-mode banner |
+| `PRESET_DOCTOR_BAMBU_ROOT`, `PRESET_DOCTOR_ORCA_ROOT` | With `PRESET_DOCTOR_ROOT` only: the folders the slicer switch offers. Without them a test run offers no switch, so it never opens a real folder |
 | `PRESET_DOCTOR_USER_DATA` | Electron's own profile folder (the e2e test uses a temp one) |
 | `PRESET_DOCTOR_E2E_EXE` | e2e only: test a packaged exe, e.g. `release/win-unpacked/Preset Doctor.exe` |
 

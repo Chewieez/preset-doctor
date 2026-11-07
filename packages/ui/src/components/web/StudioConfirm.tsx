@@ -1,3 +1,5 @@
+import { useSlicer } from '../../slicerContext';
+
 interface Props {
   checked: boolean;
   disabled?: boolean;
@@ -5,10 +7,11 @@ interface Props {
 }
 
 /**
- * Web only. A browser can't see whether Bambu Studio is running, so the user confirms it.
+ * Web only. A browser can't see whether the slicer is running, so the user confirms it.
  * Fix and Restore stay off until this is ticked.
  */
 export function StudioConfirm({ checked, disabled = false, onChange }: Props) {
+  const { name } = useSlicer();
   return (
     <label className="option studio-confirm" data-testid="studio-confirm">
       <input
@@ -18,7 +21,7 @@ export function StudioConfirm({ checked, disabled = false, onChange }: Props) {
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>
-        <strong>I've closed Bambu Studio</strong>
+        <strong>I've closed {name}</strong>
         <span className="muted">
           {' '}
           (and made the copy after closing it; keep it closed until you've copied the files back)

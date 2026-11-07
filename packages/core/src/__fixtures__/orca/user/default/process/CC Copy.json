@@ -1,0 +1,10 @@
+{
+    "bottom_shell_layers": "3",
+    "bottom_shell_thickness": "0.6",
+    "from": "User",
+    "inherits": "0.20mm Standard @Elegoo CC 0.4 nozzle",
+    "name": "CC Copy",
+    "print_settings_id": "CC Copy",
+    "sparse_infill_pattern": "zig-zag",
+    "version": "2.3.2.0"
+}

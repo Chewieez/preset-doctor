@@ -44,24 +44,45 @@ Either way, the core library and CLI come first and don't change.
 | Platform | Windows first. Mac later only if people ask. |
 | Language | TypeScript everywhere. Vitest for tests. |
 | Distribution | Free. GitHub repo plus GitHub Pages (web) or GitHub Releases (desktop). Ko-fi or similar donation link. No licensing, no keys. |
-| Scope | Filament presets only. Core stays type-agnostic so process and machine presets can come later. |
-| Slicers | Bambu Studio only. Root path is config, so OrcaSlicer (`%APPDATA%\OrcaSlicer`) can come later. |
+| Scope | Filament, process and printer (machine) presets. Each type is checked against its own system presets, as Studio keeps each type in its own collection (design: `docs/design-v0.2.md` §4). |
+| Slicers | Bambu Studio and OrcaSlicer, on Windows. Everything that differs lives in a `SlicerProfile` (`packages/core/src/slicer.ts`); a folder's files decide which profile applies (`BambuStudio.conf` or `OrcaSlicer.conf`, then `system/OrcaFilamentLibrary.*` before `system/BBL.json`, then a lone `user/` counts as Bambu Studio; both confs is an error). Bambu Studio output is unchanged. OrcaSlicer's differences and their sources: §11 and `docs/design-v0.2.md` §6. |
 
 ## 4. File layout the tool must handle
 
 ```
 %APPDATA%\BambuStudio\
   BambuStudio.conf              app config (JSON): enabled printers, current selections, sync flag
-  system\BBL.json               index of system presets: filament_list[{name, sub_path}]
+  system\BBL.json               index of system presets: filament_list, process_list, machine_list [{name, sub_path}]
   system\BBL\filament\*.json    system filament presets (may be in subfolders, e.g. P1P\)
+  system\BBL\process\*.json     system process presets (fdm_process_* are templates, not selectable)
+  system\BBL\machine\*.json     system printer presets, plus g-code template files without a "type"
   user\<id>\filament\*.json     user presets (<id> = numeric account id, or "default" when logged out)
   user\<id>\filament\*.info     sidecar per preset: sync_info, user_id, setting_id, base_id, updated_time
   user\<id>\filament\base\      custom filaments made via the "Create Filament" wizard
+  user\<id>\process\[base\]     user process presets, same layout
+  user\<id>\machine\[base\]     user printer presets, same layout (base\: "Create Printer" wizard)
+```
+
+OrcaSlicer keeps the same `user\` layout in a different folder, with several vendors instead of one:
+
+```
+%APPDATA%\OrcaSlicer\
+  OrcaSlicer.conf                   app config (JSON, optional "# MD5 checksum" trailer); "header" holds the version
+  system\OrcaFilamentLibrary.json   the shared filament library; any vendor's system preset may inherit from it
+  system\<Vendor>.json, <Vendor>\   one index and folder per installed vendor (BBL, Custom, Elegoo, ...)
+  system\<Vendor>.opc               2.5: a packed vendor (names readable, settings not), instead of the JSON
+  user\<id>\...                     as above; <id> is "default", a Bambu id or an Orca Cloud id
+  user\<id>\_local\, _subscribed\   2.5: bundle presets; used only as parents, never scanned or fixed
+  user\hints.cereal                 a file, not an account
+  user_backup-v<version>\           Orca's own copy per update; never read, scanned or backed up
+  orca_refresh_token.sec, .orcaslicer_machine_id, printers\   never read
 ```
 
 System preset shape: `type`, `name`, `inherits`, `from: "system"`, `setting_id`, `instantiation`, optional `include[]`, `compatible_printers[]` (usually inherited), then setting overrides as string arrays.
 
-User preset shape (confirm against fixtures): `name`, `inherits`, `from: "User"`, `version`, `filament_settings_id`, overrides only. Compatibility comes from the parent chain.
+User preset shape (confirm against fixtures): `name`, `inherits`, `from: "User"`, `version`, the settings id, overrides only. The settings id is `filament_settings_id` (an array) for filament, and `print_settings_id` or `printer_settings_id` (a string) for process and printer presets. Compatibility comes from the parent chain.
+
+A system preset whose file says `"instantiation": "false"` (an `@base` filament, an `fdm_*` template) is not a valid parent: Studio never puts it in the list a user preset's parent is looked up in, so a user preset based on one is hidden.
 
 Several `<id>` folders can exist. Scan all; let the user pick.
 
@@ -79,15 +100,30 @@ Fix: rank candidate parents and let the user confirm.
 Names are the ones Studio uses: a system preset is named by the `name` inside its file, not by its `BBL.json` entry (they differ in a few old profiles). A user preset is only offered as a parent when it is in `filament/base/`, has a system parent or none, and its file name equals its name: Studio can't use a top-level user preset as another top-level preset's parent (§10, question 2).
 Apply: rewrite `inherits`. Also update `base_id` in the `.info` sidecar to the new parent's `setting_id` (open question 1: harmless, Studio never resolves through it).
 
-**R4 MALFORMED** (report; one fix)
-JSON parse failure, missing `name`, `name` different from the filename stem, or missing `.info` sidecar. Auto-fix only the name/filename mismatch.
+R1 runs per type, and parents only resolve within the same type. The steps above are the filament ranking. Process presets are matched by layer height, profile and the printers the parent lists (a process's printers come from its parent, so the new parent decides which printers Studio offers it for). Printer presets are matched by printer model and nozzle, and are **never** pre-selected: the user picks the printer they have. Details: `docs/design-v0.2.md` §4.5, §4.6 and §4.11.
 
-**Later, not MVP:** R2 printer not enabled, R3 nozzle mismatch (both report-only, need `BambuStudio.conf` keys), R5 cloud sync note (shipped as an `info` note: see §10, question 3).
+**R4 MALFORMED** (report; one fix)
+JSON parse failure, missing `name`, `name` different from the filename stem, or missing `.info` sidecar. Auto-fix only the name/filename mismatch. Runs for every type; the rename also rewrites that type's settings id, and only clashes with names of the same type.
+
+**R2 PRINTER_NOT_ADDED and R3 NOZZLE_NOT_ADDED** (report-only, severity `info`, status `unsupported`; never a fix)
+For presets Studio **does** load, but doesn't offer for any printer that is added in Studio: filaments sit greyed out under "Unsupported presets", processes are left out of the process list (§10, finding 5). Filament and process presets only: Studio has no compatibility check for printer presets.
+Inputs come from `BambuStudio.conf`: `models` (the added printers: vendor, `printer_model` and the added nozzle sizes), `presets.machine` and `presets.process`. Nothing else in the conf is read (it also holds device access codes). The preset's printer list is its own `compatible_printers` if its file has the key, even `[]`, otherwise the nearest ancestor's; a custom filament with no parent and an empty list takes the part of its name after `@`, as Studio does. In order:
+1. No list and no condition: fine for every printer. A `compatible_printers_condition` with an empty list: "can't tell" (Studio evaluates it; Preset Doctor never guesses).
+2. The list names the selected printer (or, for a user printer, its direct parent): fine.
+3. It names another added printer (or a printer preset of the user's own): fine, counted in one scan-level note `R3_NOT_FOR_SELECTION` ("made for another printer you've added"). Filaments that list only other processes in `compatible_prints` are counted there too.
+4. It names an added printer of another vendor profile (e.g. a BBL-based filament for a printer made with the wizard): R2, "another brand's printer profile" (Studio's vendor check).
+5. An entry's printer model is added, but not with that nozzle size: R3, "add that nozzle in Studio's printer selection".
+6. Otherwise R2: the printers it is for aren't added ("add that printer in Studio, or ignore or delete the preset"), or no profile defines them ("probably renamed or removed in an update"). Names that no profile defines are read as `<model> <d> nozzle` and marked as read from the name.
+
+Skipped: presets R1 or R4 report as hidden or broken (and their children), files with `"instantiation": "false"`, and every preset when the conf is missing, unreadable or lists no printers (the UI then shows one muted line; nothing else changes). Editing `compatible_printers` would fight Studio's "save only what differs from the parent" model, so R2/R3 never offer a fix. Details: `docs/design-v0.2.md` §5.
+
+**R5 CLOUD_SYNC** (an `info` note; see §10, question 3).
 
 ## 6. Safety (non-negotiable)
 
-- Never write while Bambu Studio is running. Desktop: detect `bambu-studio.exe`. Web: can't detect it, so show a required "I've closed Bambu Studio" checkbox before the Fix button enables.
+- Never write while Bambu Studio is running. Desktop: detect `bambu-studio.exe`. Web: can't detect it, so show a required "I've closed Bambu Studio" checkbox before the Fix button enables. The same for OrcaSlicer with `orca-slicer.exe` and "I've closed OrcaSlicer"; when a folder's slicer can't be told, both must be closed.
 - Before the first write of a session, back up the whole `user\` folder. Desktop: zip to `%APPDATA%\PresetDoctor\backups\<timestamp>.zip`. Web: the same zip, written to `preset-doctor-backups\` inside the picked folder (and offered as a download). Restore from a list of backups (the current state is backed up first).
+- A backup records its slicer (none recorded = Bambu Studio) and is never restored into the other slicer's folder, with no override. A restore writes each `X.json` before its `X.info`. For OrcaSlicer, a restore never creates a lone `.info`: a backed-up `X.info` whose `X.json` is neither in the backup nor on disk is skipped and reported, because OrcaSlicer 2.5 reads a lone `.info` with a `setting_id` as "delete this preset in the cloud" (§11).
 - Show a diff of every proposed change. Nothing is written without an explicit click.
 - Write safely (temp file then rename on desktop; write-then-verify on web). Preserve key order and 4-space indentation so diffs stay small.
 - No network calls of any kind. Say so in the UI.
@@ -198,8 +234,54 @@ Read from [bambulab/BambuStudio](https://github.com/bambulab/BambuStudio) at tag
   - An orphan isn't loaded, so this can't touch it. Once repaired, it is loaded, so it can be deleted if its cloud record was deleted elsewhere. Backups cover this case.
 - Turning sync off only postpones all of this. Studio offers to turn it back on at every online login (`slic3r/GUI_App.cpp:6016-6027`, `slic3r/MainFrame.cpp:4923-4970`).
 
+**5. Which loaded presets Studio offers, and where the others go (R2/R3). Confidence: high for the checks, medium for how processes show.**
+
+- A loaded user preset is built from its parent's config with its own keys on top (`Preset.cpp:1521-1526`; `PrintConfig.cpp:10455-10470`), and Studio saves only the keys that differ from the parent (`Preset.cpp:685-722`). So `compatible_printers` is in a user file only when it differs.
+- `is_compatible_with_printer` (`Preset.cpp:821-843`):
+  - a preset whose vendor (the nearest ancestor's, `get_preset_with_vendor_profile`, `Preset.cpp:2921-2933`) differs from the printer's is incompatible (`:823-825`);
+  - a condition counts only when the list is empty, and a parse error counts as compatible (`:829-837`);
+  - otherwise the list must be empty or name the printer (`:838-840`), or, for a user printer, its direct parent only ("FIXME only check the parent", `:811-819, 842`).
+- `update_compatible_internal` (`Preset.cpp:3081-3123`) runs that check, and for filaments also `is_compatible_with_print` against the selected process (`:784-804, 3113-3114`). Processes are checked against the printer only (`PresetBundle.cpp:7382-7383`). A multi-nozzle-size mode also accepts sibling nozzle presets (`Preset.cpp:3105-3110`), but it is a project setting (`PresetBundle.cpp:3575-3620`), so Preset Doctor can't see it.
+- A system printer is shown only when the conf's `models` lists its `printer_model` and `printer_variant` (`set_visible_from_appconfig`, `Preset.cpp:879-884`; `AppConfig.cpp:696-707, 1199-1205`). User printers have no vendor and are always shown (`Preset.cpp:877`).
+- Filaments that don't fit go to the bottom group "Unsupported presets", greyed out with a red flag (`slic3r/PresetComboBoxes.cpp:1717-1729, 1851`). Processes have no such group: an incompatible process is left out unless it is the selected one (`slic3r/PresetComboBoxes.cpp:2126-2135`), and the "show incompatible" button seems to be switched off (`slic3r/Tab.cpp:290, 656-657`; confidence medium, on the checklist).
+- A user file with `"instantiation": "false"` loads but is never shown (`Preset.cpp:1505-1506`).
+
 **4. There is no on-disk cache of the preset list. Confidence: high.**
 
 - Studio rebuilds the user preset list from `user/<id>/filament/*.json` (and `base/`) on every start, login and account switch (`PresetBundle.cpp:570-575, 900-930`; `slic3r/GUI_App.cpp:2056, 5334, 6019`). Nothing else under `user/<id>` is read as an index.
 - The `[presets]` section of `BambuStudio.conf` holds only the names of the selected presets. If a selected preset is missing, Studio falls back to the first compatible one (`PresetBundle.cpp:2157-2216, 2367-2378`).
 - The only cache is Studio's memory. Studio must therefore be closed during a repair and reopened afterwards. A running Studio also rewrites sidecars while it syncs (`Preset.cpp:1875-1902`).
+
+## 11. OrcaSlicer source findings
+
+Read from [OrcaSlicer/OrcaSlicer](https://github.com/OrcaSlicer/OrcaSlicer) at tags `v2.5.0` and `v2.3.2` (the live install on the test machine is 2.3.2-rc). Paths are under `src/` unless they start with `.github/` or `scripts/`. Like §10, these come from reading the source, not from watching OrcaSlicer; `docs/real-test-checklist.md` lists what to confirm. The design with every decision is `docs/design-v0.2.md` §6.
+
+**1. Where the folder is and what to read.**
+
+- The data folder is `%APPDATA%\OrcaSlicer`, also for the MSIX build (`slic3r/GUI/GUI_App.cpp:2744, 2779-2783@v2.5.0`; `scripts/msix/AppxManifest.xml:22-31@v2.5.0`).
+- `OrcaSlicer.conf` is JSON with an optional `# MD5 checksum` trailer (`libslic3r/AppConfig.cpp:741-774@v2.5.0`). Preset Doctor reads only `header` (the version), `app.sync_user_preset`, `app.cloud_providers` (`libslic3r/AppConfig.cpp:1024-1031@v2.5.0`), `app.show_unsupported_presets`, `app.preset_folder` (`libslic3r/PresetBundle.cpp:900-905@v2.5.0`), `models`, `presets` and `orca_presets` (the process per printer, `libslic3r/AppConfig.cpp:943-949@v2.5.0`).
+- The process is `orca-slicer.exe` (`CMakeLists.txt:223-229@v2.5.0`). `user.lock` and `OrcaSlicer.conf.lock` are short-lived locks, not a running signal (`libslic3r/InstanceLock.hpp:9-22@v2.5.0`).
+- `user_backup-v<version>\` folders are written once per version and never read (`libslic3r/PresetBundle.cpp:1047-1068@v2.5.0`).
+
+**2. System presets come from many vendors, and the library is shared.**
+
+- Every `system/<V>.json` loads, `OrcaFilamentLibrary` first; on a duplicate name the first one wins (`libslic3r/PresetBundle.cpp:3338-3341, 3361-3372@v2.5.0`; `libslic3r/Preset.cpp:4388-4404@v2.5.0`).
+- A vendor's system preset may inherit from its own vendor or from `OrcaFilamentLibrary`, and nothing else (`libslic3r/PresetBundle.cpp:7797-7826@v2.5.0`).
+- 2.5 can ship a vendor as one packed `system/<V>.opc` without the JSON (`.github/workflows/build_orca.yml:522-527@v2.5.0`), and installing one removes the JSON and the folder (`slic3r/Utils/PresetUpdater.cpp:147-163@v2.5.0`). The file is a 20-byte header (magic, version, sizes, CRC-32) over an uncompressed body of length-prefixed strings (`libslic3r/PresetCacheFormat.cpp:317-333, 435-470@v2.5.0`). Preset Doctor checks the CRC and looks names up as whole strings; it never reads settings from it.
+- There is no vendor check in the compatibility test (`libslic3r/Preset.cpp:904-907@v2.5.0`), unlike Studio (§10, finding 5). From 2.4 the "Unsupported presets" group is hidden unless `show_unsupported_presets` is on (`slic3r/GUI/PresetComboBoxes.cpp:1505-1507@v2.5.0`); up to 2.3 it is always shown (`slic3r/GUI/PresetComboBoxes.cpp:1356@v2.3.2`).
+
+**3. A missing parent is looked for in more places than in Studio.**
+
+The user preset loader calls `find_preset2` with `auto_match` (`libslic3r/Preset.cpp:1907-1917@v2.5.0`), which tries, in order (`libslic3r/Preset.cpp:3894-3931@v2.5.0`):
+
+1. the exact name among the presets OrcaSlicer lists (templates with `"instantiation": "false"` are not among them);
+2. the system presets' `renamed_from` names, followed recursively in 2.5 and one step in 2.3 (`libslic3r/Preset.cpp:2738-2764@v2.3.2`). The map is built with the first entry winning (`libslic3r/Preset.cpp:4466-4479@v2.5.0`). `renamed_from` is split like `unescape_strings_cstyle` (`libslic3r/PresetBundle.cpp:8484-8488@v2.5.0`; `libslic3r/Config.cpp:173-242@v2.5.0`). A system preset with neither `alias` nor `renamed_from` gets one derived from its name (`libslic3r/PresetBundle.cpp:7934-7943@v2.5.0`);
+3. for a name with "Generic" in it, the name rewritten to `Generic <material> @System` (`libslic3r/Preset.cpp:3919-3921@v2.5.0`), then steps 1 and 2 again.
+
+In 2.5 a parent may also be a bundle preset, `_local/<id>/<name>` or `_subscribed/<id>/<name>` (`libslic3r/Preset.cpp:106-131@v2.5.0`), loaded before plain presets (`libslic3r/PresetBundle.cpp:1445-1520@v2.5.0`). Preset Doctor reports a preset found through steps 2 or 3 as **OK, with notes** (it loads), offers the new name without pre-selecting it, and treats a bundle or `.opc` parent as present with unknown settings. A parent that may be in an unreadable `.opc` is "could not be checked", never hidden.
+
+**4. User files and the cloud.**
+
+- The `.info` format is Studio's (`libslic3r/Preset.cpp:701-760@v2.5.0`), and a preset without `version` is dropped as in Studio (`libslic3r/Preset.cpp:1893-1897@v2.5.0`).
+- Cloud sync follows Studio's logic: `need_sync` (`libslic3r/Preset.cpp:2479-2486@v2.5.0`), the upload filter (`:2489-2502`), a cloud copy applied only when newer (`:2636-2652`) and skipped when its parent is missing (`:2714-2721`). So the R5 note reads as for Studio, naming Orca Cloud and the Bambu cloud.
+- **A `.info` without its `.json` is a delete order in 2.5.** At startup OrcaSlicer queues every lone `.info` with a `setting_id` under `user/<id>/<type>[/base]` for deletion in the cloud (`slic3r/Utils/CloudDeleteQueue.cpp:128-168@v2.5.0`). Hence the restore rule in §6.

@@ -346,6 +346,95 @@ describe('planFixes', () => {
   });
 });
 
+describe('planFixes for process and printer presets', () => {
+  it('types-bambu: re-parents processes, saying which printers, and renames with print_settings_id', async () => {
+    const fs = nodeFs(fixtureRoot('types-bambu'), { readOnly: true });
+    const r = await scan(fs);
+    const changes = await planFixes(fs, r, defaultChoices(r));
+    expect(changes.map((c) => c.path)).toEqual([
+      'user/1000000001/process/Added Suffix.json',
+      'user/1000000001/process/Case Only.json',
+      'user/1000000001/process/Name Mismatch.json',
+    ]);
+    const [added, , renamed] = changes;
+    expect(changedLines(added!.before, added!.after)).toEqual([
+      [
+        '    "inherits": "0.20mm Standard @BBL X2D 0.4 nozzle",',
+        '    "inherits": "0.20mm Standard @BBL X2D",',
+      ],
+    ]);
+    expect(added?.description).toBe(
+      'Set its parent to "0.20mm Standard @BBL X2D" (was "0.20mm Standard @BBL X2D 0.4 nozzle"). ' +
+        'The new parent decides which printers Studio offers this process for: Bambu Lab X2D 0.4 ' +
+        'nozzle.',
+    );
+    expect(changedLines(renamed!.before, renamed!.after)).toEqual([
+      ['    "name": "Name Mismatch Old",', '    "name": "Name Mismatch",'],
+      [
+        '    "print_settings_id": "Name Mismatch Old",',
+        '    "print_settings_id": "Name Mismatch",',
+      ],
+    ]);
+  });
+
+  it('a printer preset is re-parented only onto the candidate the user picked', async () => {
+    const fs = nodeFs(fixtureRoot('types-bambu'), { readOnly: true });
+    const r = await scan(fs);
+    const path = 'user/1000000001/machine/Case Only Printer.json';
+    expect(defaultChoices(r).some((c) => c.presetPath === path)).toBe(false);
+    const [change] = await planFixes(fs, r, [
+      { presetPath: path, candidateName: 'Bambu Lab X1 Carbon 0.4 nozzle' },
+    ]);
+    expect(change?.path).toBe(path);
+    expect(change?.after).toContain('"inherits": "Bambu Lab X1 Carbon 0.4 nozzle"');
+    expect(change?.after).toContain('"printer_settings_id": "Case Only Printer"');
+  });
+
+  it('a filament and a process of the same name are not the same preset', async () => {
+    const fs = fakeStudio(
+      [
+        { name: 'Generic PLA @BBL X1C', compatible_printers: ['Bambu Lab X1 Carbon 0.4 nozzle'] },
+        {
+          type: 'process',
+          name: '0.20mm Standard @BBL X1C',
+          compatible_printers: ['Bambu Lab X1 Carbon 0.4 nozzle'],
+        },
+      ],
+      [
+        { name: 'Shared', inherits: 'Generic PLA @BBL X1C' },
+        {
+          type: 'process',
+          file: 'Shared (2)',
+          name: 'Shared',
+          inherits: '0.20mm Standard @BBL X1C',
+        },
+        { name: 'Orphan', inherits: 'Generic PLA @BBL X1C 0.4 nozzle' },
+      ],
+    );
+    const r = await scan(fs);
+    // Renaming the process "Shared" must not block a filament repair onto the filament "Shared".
+    // R1 wouldn't offer that filament (it has a parent), so offer it by hand, as above.
+    const orphan = r.findings.find(
+      (f) => f.ruleId === R1_ID && f.presetPath === 'user/1000000001/filament/Orphan.json',
+    )!;
+    orphan.proposedFix = {
+      kind: 'setInherits',
+      candidates: [
+        { name: 'Shared', confidence: 'high', reason: '', preselected: true, source: 'user' },
+      ],
+    };
+    const changes = await planFixes(fs, r, [
+      { presetPath: 'user/1000000001/filament/Orphan.json', candidateName: 'Shared' },
+      { presetPath: 'user/1000000001/process/Shared (2).json', rename: true },
+    ]);
+    expect(changes.map((c) => c.path)).toEqual([
+      'user/1000000001/filament/Orphan.json',
+      'user/1000000001/process/Shared (2).json',
+    ]);
+    expect(changes[1]?.after).toContain('"print_settings_id": "Shared (2)"');
+  });
+});
+
 describe('findStale', () => {
   it('lists planned files that changed or are gone, by bytes', async () => {
     const fs = memFs({ 'a.json': 'same', 'b.json': 'edited', 'c.json': 'same' });

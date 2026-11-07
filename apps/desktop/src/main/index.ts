@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu } from 'electron';
 import * as nodePath from 'node:path';
-import { defaultPaths, isStudioRunning } from '@preset-doctor/core/node';
+import { slicerById } from '@preset-doctor/core';
+import { defaultPaths, isSlicerRunning } from '@preset-doctor/core/node';
 import { APP_NAME, DONATION_URL, WINDOW_TITLE } from '../shared/constants.js';
 import iconPath from '../../resources/icon.png?asset';
 import { readConfig } from './config.js';
@@ -20,7 +21,7 @@ hardenApp(devServerUrl);
 const config = readConfig(process.env, defaultPaths());
 const service = new DoctorService({
   config,
-  isStudioRunning: () => isStudioRunning(),
+  isStudioRunning: (slicer) => isSlicerRunning(slicerById(slicer)),
   version: app.getVersion(),
   donationUrl: DONATION_URL,
 });

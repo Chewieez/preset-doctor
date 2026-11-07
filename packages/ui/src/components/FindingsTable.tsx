@@ -1,6 +1,23 @@
-import type { Finding, PresetSummary } from '@preset-doctor/core';
-import { choiceFor, displayName, fixesFor, hasFix, type Filter, type Selection } from '../model';
+import type { Finding, PresetSummary, PresetType } from '@preset-doctor/core';
+import {
+  choiceFor,
+  displayName,
+  fixesFor,
+  hasFix,
+  typeOf,
+  TYPE_TERMS,
+  type Filter,
+  type Selection,
+} from '../model';
+import { useSlicer } from '../slicerContext';
 import { StatusBadge } from './Badges';
+
+/** One preset-type tab: its type, how many presets it has, and how many need attention. */
+export interface TypeTab {
+  type: PresetType;
+  count: number;
+  problems: number;
+}
 
 interface Props {
   rows: PresetSummary[];
@@ -8,9 +25,15 @@ interface Props {
   selection: Selection;
   selectedPath: string | null;
   filter: Filter;
+  /** Counts within the current tab. */
   problemCount: number;
   totalCount: number;
   search: string;
+  /** The current preset type; its words are used for the empty text. */
+  tab: PresetType;
+  /** Shown as tabs only when there are two or more. */
+  tabs: TypeTab[];
+  onTab: (t: PresetType) => void;
   onFilter: (f: Filter) => void;
   onSearch: (q: string) => void;
   onSelect: (path: string) => void;
@@ -19,8 +42,34 @@ interface Props {
 
 export function FindingsTable(props: Props) {
   const { rows, byPath, selection, selectedPath } = props;
+  const slicer = useSlicer();
   return (
     <section className="table-card" aria-label="Presets">
+      {props.tabs.length > 1 && (
+        <div className="type-tabs" role="group" aria-label="Preset type" data-testid="type-tabs">
+          <div className="segmented">
+            {props.tabs.map((t) => (
+              <button
+                key={t.type}
+                type="button"
+                aria-pressed={props.tab === t.type}
+                onClick={() => props.onTab(t.type)}
+                data-testid={`type-tab-${t.type}`}
+              >
+                {TYPE_TERMS[t.type].tab} ({t.count})
+                {t.problems > 0 && (
+                  <span
+                    className="tab-badge"
+                    title={`${t.problems} need${t.problems === 1 ? 's' : ''} attention`}
+                  >
+                    {t.problems}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="table-tools">
         <div className="segmented" role="group" aria-label="Show">
           <button
@@ -51,10 +100,12 @@ export function FindingsTable(props: Props) {
         {rows.length === 0 ? (
           <p className="empty" data-testid="table-empty">
             {props.totalCount === 0
-              ? 'This account has no filament presets. If you expected some, check that this is ' +
-                'the right folder and account.'
+              ? `This account has no ${TYPE_TERMS[props.tab].noun}s. If you expected some, check ` +
+                'that this is the right folder and account.'
               : props.filter === 'problems' && props.search === ''
-                ? `Nothing needs attention. All ${props.totalCount} presets can be shown by Bambu Studio.`
+                ? props.totalCount === 1
+                  ? `Nothing needs attention. This preset can be shown by ${slicer.name}.`
+                  : `Nothing needs attention. All ${props.totalCount} presets can be shown by ${slicer.name}.`
                 : 'No presets match.'}
           </p>
         ) : (
@@ -112,7 +163,7 @@ export function FindingsTable(props: Props) {
                     </td>
                     <td className="col-name">
                       <span className="name">{displayName(p)}</span>
-                      {p.isBase && <span className="tag">custom filament</span>}
+                      {p.isBase && <span className="tag">{TYPE_TERMS[typeOf(p)].baseTag}</span>}
                     </td>
                     <td className="col-status">
                       <StatusBadge status={p.status} />

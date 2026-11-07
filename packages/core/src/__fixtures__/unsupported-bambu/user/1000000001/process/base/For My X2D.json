@@ -1,0 +1,34 @@
+{
+    "bridge_speed": [
+        "50",
+        "50",
+        "50",
+        "50",
+        "200",
+        "200"
+    ],
+    "compatible_printers": [
+        "My X2D"
+    ],
+    "default_acceleration": [
+        "10000",
+        "10000",
+        "10000",
+        "1000",
+        "1000",
+        "1000"
+    ],
+    "enable_overhang_speed": [
+        "1",
+        "1",
+        "1",
+        "1",
+        "0",
+        "0"
+    ],
+    "from": "User",
+    "inherits": "",
+    "name": "For My X2D",
+    "print_settings_id": "For My X2D",
+    "version": "2.8.0.6"
+}

@@ -1,7 +1,13 @@
 /**
- * R1 ORPHANED_PARENT: a user preset whose `inherits` names a preset that does not exist.
- * Studio hides such presets. The fix is to point `inherits` at the preset Bambu now uses for
- * the same filament, printer and nozzle; this module finds and ranks those candidates.
+ * R1 ORPHANED_PARENT: a user preset whose `inherits` names a preset that does not exist, or
+ * only a template ("instantiation": "false") that Studio never offers as a parent. Studio hides
+ * such presets. The fix is to point `inherits` at the preset Bambu now uses for the same
+ * filament, printer and nozzle; this module finds and ranks those candidates.
+ *
+ * Parents resolve within one preset type (RuleContext holds the presets and index of one type).
+ * The chain cases (cycle, too deep, a missing parent behind a user parent) are shared here; a
+ * missing system parent of a process or printer preset goes to r1Process.ts or r1Machine.ts.
+ * The rest of this comment is the filament ranking.
  *
  * Ranking (the spec's plain " 0.4 nozzle" toggle is not enough: on the X2D the unsuffixed
  * name is the 0.6/0.8 nozzle variant, on the X1C it is the 0.4 one):
@@ -56,6 +62,21 @@ import {
 } from '../types.js';
 import type { RuleContext } from './context.js';
 import {
+  BASE_ID_NOTE,
+  eqi,
+  joinList,
+  missingIntro,
+  nameFieldNote,
+  orderCandidates,
+  preselection,
+  quoteCandidate,
+  rewordFinding,
+  type RankedCandidate,
+} from './r1Common.js';
+import { machineOrphanFinding } from './r1Machine.js';
+import { orcaFallbackFinding, orcaMissingFinding } from './r1Orca.js';
+import { processOrphanFinding } from './r1Process.js';
+import {
   certainUnsuffixedNozzles,
   coversAll,
   nozzlesFor,
@@ -65,9 +86,6 @@ import {
 } from './r1Nozzles.js';
 
 export const R1_ID = RULE_IDS.orphanedParent;
-
-/** Other-printer candidates are rarely right; keep the list short enough to read. */
-const MAX_LOW_CANDIDATES = 10;
 
 /** Display name of a user preset: its `name`, or the file name when that is missing. */
 export function displayName(p: UserPreset): string {
@@ -92,15 +110,45 @@ export function userCandidateNames(findings: readonly Finding[]): Map<string, st
 export async function checkR1(preset: UserPreset, ctx: RuleContext): Promise<Finding | null> {
   if (!preset.json) return null;
   const name = displayName(preset);
+  const profile = ctx.profile;
+  // The texts below are written for Bambu Studio; other slicers reword them.
+  const orphanOf = async (missing: string): Promise<Finding> => {
+    // Parents resolve within one type, so the replacement has the orphan's type too.
+    const f =
+      preset.type === 'process'
+        ? await processOrphanFinding(preset, name, missing, ctx)
+        : preset.type === 'machine'
+          ? await machineOrphanFinding(preset, name, missing, ctx)
+          : await orphanFinding(preset, name, missing, ctx);
+    return profile ? rewordFinding(f, profile) : f;
+  };
+  const base = { ruleId: R1_ID, presetPath: preset.path, presetName: name };
+  if (ctx.orca) {
+    const fallback = await orcaFallbackFinding(base, preset, ctx, orphanOf);
+    if (fallback) return fallback;
+  }
+  const f = await chainFinding(preset, name, ctx, orphanOf);
+  if (!f) return null;
+  const { end } = chain(preset, ctx.resolve);
+  return ctx.orca && end.kind === 'missing' ? orcaMissingFinding(f, end.name, ctx) : f;
+}
+
+async function chainFinding(
+  preset: UserPreset,
+  name: string,
+  ctx: RuleContext,
+  orphanOf: (missing: string) => Promise<Finding>,
+): Promise<Finding | null> {
   const { links, end } = chain(preset, ctx.resolve);
   const base = { ruleId: R1_ID, presetPath: preset.path, presetName: name };
+  const reword = (f: Finding): Finding => (ctx.profile ? rewordFinding(f, ctx.profile) : f);
 
   switch (end.kind) {
     case 'root':
       return null;
     case 'missing':
-      if (links.length === 0) return orphanFinding(preset, name, end.name, ctx);
-      return {
+      if (links.length === 0) return orphanOf(end.name);
+      return reword({
         ...base,
         severity: 'warning',
         status: 'hidden',
@@ -109,9 +157,9 @@ export async function checkR1(preset: UserPreset, ctx: RuleContext): Promise<Fin
           `This preset is based on your preset "${end.referencedBy}", which Studio hides because ` +
           `the preset it is based on ("${end.name}") no longer exists. Fixing ` +
           `"${end.referencedBy}" will bring this one back too.`,
-      };
+      });
     case 'cycle':
-      return {
+      return reword({
         ...base,
         severity: 'error',
         status: 'broken',
@@ -119,9 +167,9 @@ export async function checkR1(preset: UserPreset, ctx: RuleContext): Promise<Fin
         explanation:
           `This preset's chain of parent presets loops back on itself at "${end.name}", so ` +
           `Studio can't work out its settings. Recreate it in Bambu Studio from a current preset.`,
-      };
+      });
     case 'tooDeep':
-      return {
+      return reword({
         ...base,
         severity: 'error',
         status: 'broken',
@@ -129,7 +177,7 @@ export async function checkR1(preset: UserPreset, ctx: RuleContext): Promise<Fin
         explanation:
           'This preset sits at the end of an unusually long chain of parent presets, which ' +
           'usually means the files are damaged. Recreate it in Bambu Studio from a current preset.',
-      };
+      });
   }
 }
 
@@ -148,25 +196,12 @@ async function orphanFinding(
     presetName: name,
     status: 'hidden',
     title: 'Parent preset is missing',
-    explanation: explain(target, ranked, ctx.system.version) + nameFieldNote(missing, ctx),
+    explanation: explain(target, ranked, ctx) + nameFieldNote(missing, ctx.presets),
   };
   if (ranked.length > 0) {
     finding.proposedFix = { kind: 'setInherits', candidates: ranked.map((r) => r.candidate) };
   }
   return finding;
-}
-
-/**
- * When the missing name is the `name` inside one of the user's own files, say why that doesn't
- * count: Studio knows a user preset only by its file name (see resolve.ts).
- */
-function nameFieldNote(missing: string, ctx: RuleContext): string {
-  const p = ctx.presets.find((x) => x.fileStem !== missing && presetName(x) === missing);
-  if (!p) return '';
-  return (
-    ` Your preset file "${p.fileStem}.json" has "${missing}" as its name inside, but Studio ` +
-    `knows a preset of yours only by its file name, "${p.fileStem}".`
-  );
 }
 
 /** Where the target nozzle sizes came from; see the module comment. */
@@ -249,21 +284,13 @@ interface Pooled {
   preset?: UserPreset;
 }
 
-interface Ranked {
-  candidate: Candidate;
+interface Ranked extends RankedCandidate {
   /**
    * How a high candidate was found; drives the explanation wording. 'otherPrinter': by
    * compatible_printers, on a preset named for another printer.
    */
   via: 'compat' | 'otherPrinter' | 'name' | 'other';
-  sortKey: number;
-  /** Its setting_id is the orphan's base_id. */
-  fromBaseId: boolean;
 }
-
-const CONFIDENCE_ORDER: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
-
-const BASE_ID_NOTE = "Your preset's sync file (.info) also names it.";
 
 async function rankCandidates(
   target: Target,
@@ -374,17 +401,7 @@ async function rankCandidates(
     }
   }
 
-  ranked.sort(
-    (a, b) =>
-      CONFIDENCE_ORDER[a.candidate.confidence] - CONFIDENCE_ORDER[b.candidate.confidence] ||
-      a.sortKey - b.sortKey ||
-      (a.candidate.source === b.candidate.source ? 0 : a.candidate.source === 'system' ? -1 : 1) ||
-      compareText(a.candidate.name, b.candidate.name),
-  );
-  const out = [
-    ...ranked.filter((r) => r.candidate.confidence !== 'low'),
-    ...ranked.filter((r) => r.candidate.confidence === 'low').slice(0, MAX_LOW_CANDIDATES),
-  ];
+  const out = orderCandidates(ranked);
   const pick = preselection(out);
   if (pick) pick.candidate.preselected = true;
   return out;
@@ -396,14 +413,6 @@ function coverReason(target: Target, source: Candidate['source']): string {
   return nozzleUnsure(target)
     ? `${whose} for the ${target.model}, for every nozzle that name could mean (${joinList(target.nozzles, 'and')} mm).`
     : `${whose} for the ${target.model} with a ${joinList(target.nozzles)} mm nozzle.`;
-}
-
-/** The single high candidate, or among several the one the orphan's base_id names. */
-function preselection(ranked: Ranked[]): Ranked | undefined {
-  const high = ranked.filter((r) => r.candidate.confidence === 'high');
-  if (high.length === 1) return high[0];
-  const named = high.filter((r) => r.fromBaseId);
-  return named.length === 1 ? named[0] : undefined;
 }
 
 /** The target sizes come from the name or the orphan's own list, not from a guess. */
@@ -503,16 +512,10 @@ function printerLabel(p: ParsedPresetName): string {
   return p.nozzle !== undefined ? `any printer, ${p.nozzle} mm nozzle` : 'any printer';
 }
 
-function explain(target: Target, ranked: Ranked[], version: string | null): string {
-  const where = version
-    ? `in Bambu Studio's system presets (version ${version})`
-    : "in Bambu Studio's system presets";
-  const intro = `This preset is based on "${target.missing}", which no longer exists ${where}, so Studio hides it.`;
+function explain(target: Target, ranked: Ranked[], ctx: RuleContext): string {
+  const intro = missingIntro(target.missing, ctx.system);
   const high = ranked.filter((r) => r.candidate.confidence === 'high');
-  const quote = (r: Ranked): string =>
-    r.candidate.source === 'user'
-      ? `your own preset "${r.candidate.name}"`
-      : `"${r.candidate.name}"`;
+  const quote = (r: Ranked): string => quoteCandidate(r.candidate);
 
   if (high.length === 1) {
     const best = high[0]!;
@@ -548,17 +551,4 @@ function explain(target: Target, ranked: Ranked[], version: string | null): stri
     return `${intro} There is no exact replacement. The closest options are listed below; only pick one if it matches your printer and nozzle.`;
   }
   return `${intro} Preset Doctor found no similar preset to switch to. You can recreate it in Bambu Studio from a current preset and copy your settings over.`;
-}
-
-function joinList(items: string[], conjunction: 'or' | 'and' = 'or'): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1]}`;
-}
-
-function eqi(a: string | undefined, b: string | undefined): boolean {
-  return (a ?? '').toLowerCase() === (b ?? '').toLowerCase();
-}
-
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
 }

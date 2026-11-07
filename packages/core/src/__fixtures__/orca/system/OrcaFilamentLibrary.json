@@ -1,0 +1,39 @@
+{
+    "name": "OrcaFilamentLibrary",
+    "version": "02.03.02.50",
+    "force_update": "0",
+    "description": "Orca Filament Library",
+    "filament_list": [
+        {
+            "name": "fdm_filament_common",
+            "sub_path": "filament/base/fdm_filament_common.json"
+        },
+        {
+            "name": "fdm_filament_abs",
+            "sub_path": "filament/base/fdm_filament_abs.json"
+        },
+        {
+            "name": "fdm_filament_pet",
+            "sub_path": "filament/base/fdm_filament_pet.json"
+        },
+        {
+            "name": "fdm_filament_pla",
+            "sub_path": "filament/base/fdm_filament_pla.json"
+        },
+        {
+            "name": "Generic ABS @System",
+            "sub_path": "filament/Generic ABS @System.json"
+        },
+        {
+            "name": "Generic PETG @System",
+            "sub_path": "filament/Generic PETG @System.json"
+        },
+        {
+            "name": "Generic PLA @System",
+            "sub_path": "filament/Generic PLA @System.json"
+        }
+    ],
+    "process_list": [],
+    "machine_model_list": [],
+    "machine_list": []
+}

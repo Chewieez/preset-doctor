@@ -21,9 +21,38 @@ before it is tagged.
 - System presets are named the way Studio names them (from the name inside each file, not the
   index), so an old profile where the two differ no longer shows a healthy preset as hidden.
 - `base_id` is never set equal to the preset's own `setting_id`, which Studio treats as broken.
+- A preset based on a system template that presets can't be based on (an `@base` filament or an
+  `fdm_*` template, `"instantiation": "false"`) is now reported as hidden, as Studio hides it.
+  Before, it showed as OK.
 
 ### Added
 
+- **OrcaSlicer support.** Preset Doctor now also scans and repairs `%APPDATA%\OrcaSlicer`, and
+  tells the two slicers apart by their files. It follows how OrcaSlicer finds a parent: across
+  vendors through its shared filament library, under a renamed preset's new name, and through
+  the "Generic" fallback; presets OrcaSlicer still loads that way are "OK, with notes" with the
+  new name offered (not pre-selected). OrcaSlicer 2.5's packed presets (`.opc`) are checked for
+  the parent's name only, and a parent that can't be checked is never called missing. The Windows
+  app shows a **Bambu Studio | OrcaSlicer** switch when both are installed and checks for
+  `orca-slicer.exe` before writing to an OrcaSlicer folder; the web version reads which slicer a
+  copy is from and its guide has OrcaSlicer steps; the command line takes `--slicer bambu|orca`.
+  Backups record their slicer and are never restored into the other slicer's folder, and an
+  OrcaSlicer restore never puts back a sync file (`.info`) without its preset, which OrcaSlicer
+  2.5 would read as "delete this preset from the cloud". Bambu Studio results are unchanged.
+- **The "Unsupported" helper.** Preset Doctor reads which printers and nozzle sizes you've added
+  in Studio (`BambuStudio.conf`) and marks a filament or process preset **Unsupported** when Studio
+  loads it but doesn't offer it for any of them: it is only for a printer you haven't added, a
+  nozzle size you haven't added, printer names Studio doesn't know, or another brand's printer
+  profile. Each comes with what to do in Studio; nothing is changed. Presets made for another
+  printer you've added are summed up in one note ("Show them" lists them). The app shows the added
+  printers above the table; the command line adds a "Loaded, but not offered for your printers"
+  group. The exit code is unchanged.
+- **Process and printer presets.** They are checked like filament presets, each against its own
+  system presets. A process suggestion lists the printers it is for, because the new parent
+  decides them. A printer suggestion is never pre-selected: you pick the printer you have. The
+  app shows a tab per preset type when there is more than one; the command line takes
+  `--type filament,process,printer`. An account's preset count now counts every type, so the
+  default account can differ on a folder with many process or printer presets.
 - SPEC.md §10 records what Bambu Studio's source code says about each open question, with
   citations (provisional until confirmed in Studio).
 - `scripts/r1-history.ts` and [docs/r1-history.md](docs/r1-history.md): replay of every

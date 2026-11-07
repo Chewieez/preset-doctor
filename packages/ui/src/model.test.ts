@@ -2,13 +2,22 @@ import type { Finding, PresetSummary, ScanResult } from '@preset-doctor/core';
 import { describe, expect, it } from 'vitest';
 import {
   choiceFor,
+  compatLines,
+  COMPAT_OTHER_QUERY,
+  countByStatus,
+  countByType,
+  defaultTab,
   displayName,
   findingsByPath,
   fixesFor,
+  forOtherSelection,
   initialSelection,
   isProblem,
   mergePaths,
   orderFindings,
+  presetTabs,
+  printersText,
+  problemsByType,
   repairNotice,
   restoreNotice,
   selectedChoices,
@@ -17,6 +26,7 @@ import {
 } from './model';
 
 const preset = (path: string, status: PresetSummary['status'], name?: string): PresetSummary => ({
+  type: 'filament',
   accountId: '1000000001',
   path,
   fileStem: path.slice(path.lastIndexOf('/') + 1).replace(/\.json$/i, ''),
@@ -65,7 +75,7 @@ delete (note as { proposedFix?: unknown }).proposedFix;
 const scan: ScanResult = {
   root: 'X',
   userId: '1000000001',
-  accounts: [{ id: '1000000001', presetCount: 5 }],
+  accounts: [{ id: '1000000001', presetCount: 5, byType: { filament: 5, process: 0, machine: 0 } }],
   presets: [
     preset('e.json', 'ok', 'Echo'),
     preset('d.json', 'info', 'delta'),
@@ -77,6 +87,17 @@ const scan: ScanResult = {
   warnings: [],
   systemVersion: '1',
   systemIndexRead: true,
+  slicer: 'bambu',
+  slicerVersion: null,
+  countsByType: { filament: 5, process: 0, machine: 0 },
+  indexesRead: { filament: true, process: true, machine: true },
+  compat: {
+    checked: false,
+    why: 'no-printers',
+    enabled: [],
+    userPrinters: 0,
+    unsupportedGroup: 'shown',
+  },
 };
 const byPath = findingsByPath(scan);
 
@@ -120,6 +141,44 @@ describe('renderer model', () => {
       'Name mismatch',
       'No sync file',
     ]);
+  });
+});
+
+describe('preset type tabs', () => {
+  const typed = (p: PresetSummary, type: PresetSummary['type']): PresetSummary => ({ ...p, type });
+  const mixed: ScanResult = {
+    ...scan,
+    presets: [
+      ...scan.presets.filter((p) => p.status === 'ok'),
+      typed(preset('p1.json', 'ok', 'Proc ok'), 'process'),
+      typed(preset('a.json', 'hidden', 'Alpha'), 'machine'),
+    ],
+    findings: [orphan],
+    countsByType: { filament: 1, process: 1, machine: 1 },
+  };
+  const mixedByPath = findingsByPath(mixed);
+
+  it('a filament-only scan has one tab, so no tab bar is shown', () => {
+    expect(presetTabs(scan)).toEqual(['filament']);
+    expect(defaultTab(scan, byPath)).toBe('filament');
+  });
+
+  it('counts rows and problems per type, and opens the first tab with a problem', () => {
+    expect(countByType(mixed)).toEqual({ filament: 1, process: 1, machine: 1 });
+    expect(problemsByType(mixed, mixedByPath)).toEqual({ filament: 0, process: 0, machine: 1 });
+    expect(presetTabs(mixed)).toEqual(['filament', 'process', 'machine']);
+    expect(defaultTab(mixed, mixedByPath)).toBe('machine');
+    const calm = { ...mixed, presets: mixed.presets.filter((p) => p.status === 'ok') };
+    expect(defaultTab(calm, findingsByPath(calm))).toBe('filament');
+    expect(defaultTab({ ...scan, presets: [] }, new Map())).toBe('filament');
+  });
+
+  it('filters rows by tab', () => {
+    expect(visiblePresets(mixed, mixedByPath, 'all', '', 'process').map((p) => p.path)).toEqual([
+      'p1.json',
+    ]);
+    expect(visiblePresets(mixed, mixedByPath, 'problems', '', 'filament')).toEqual([]);
+    expect(visiblePresets(mixed, mixedByPath, 'all', '')).toHaveLength(3);
   });
 });
 
@@ -187,6 +246,100 @@ describe('changed-file lists (web copy-back)', () => {
       'user/a.info',
       'user/a.json',
       'user/b.json',
+    ]);
+  });
+});
+
+describe('printer checks (R2/R3)', () => {
+  const unsupported: PresetSummary = {
+    ...preset('u.json', 'unsupported', 'Uniform'),
+    compat: {
+      state: 'printer-not-added',
+      printers: ['Bambu Lab H2D 0.4 nozzle'],
+      source: { kind: 'own' },
+    },
+  };
+  const elsewhere: PresetSummary = {
+    ...preset('o.json', 'ok', 'Oscar'),
+    compat: {
+      state: 'other-printer',
+      printers: ['Bambu Lab P1S 0.4 nozzle'],
+      matchedPrinters: ['Bambu Lab P1S 0.4 nozzle'],
+      source: { kind: 'inherited', from: 'Generic PLA @BBL P1S' },
+    },
+  };
+  const r2: Finding = {
+    ruleId: 'R2_PRINTER_NOT_ADDED',
+    severity: 'info',
+    presetPath: 'u.json',
+    status: 'unsupported',
+    title: "Only for printers you haven't added",
+    explanation: '',
+  };
+  const sidecarNote: Finding = { ...note, presetPath: 'u.json' };
+  const withCompat: ScanResult = {
+    ...scan,
+    presets: [...scan.presets, unsupported, elsewhere],
+    findings: [...scan.findings, sidecarNote, r2],
+  };
+  const map = findingsByPath(withCompat);
+
+  it('counts unsupported rows as needing attention, after hidden and broken', () => {
+    expect(isProblem(unsupported, map)).toBe(true);
+    expect(isProblem(elsewhere, map)).toBe(false);
+    expect(visiblePresets(withCompat, map, 'problems', '').map((p) => p.path)).toEqual([
+      'a.json',
+      'b.json',
+      'u.json',
+      'c.json',
+    ]);
+    expect(countByStatus(withCompat).unsupported).toBe(1);
+    expect(countByStatus(scan).unsupported).toBe(0);
+  });
+
+  it('puts the R2 finding before an R4 note of the same severity', () => {
+    expect(orderFindings(map.get('u.json')!).map((f) => f.ruleId)).toEqual([
+      'R2_PRINTER_NOT_ADDED',
+      'R4_MALFORMED',
+    ]);
+  });
+
+  it('lists exactly the rows of the grouped note for its search text', () => {
+    expect(visiblePresets(withCompat, map, 'all', COMPAT_OTHER_QUERY).map((p) => p.path)).toEqual([
+      'o.json',
+    ]);
+    expect(forOtherSelection(withCompat).map((p) => p.path)).toEqual(['o.json']);
+  });
+
+  it('describes the added printers, or why the checks were skipped', () => {
+    expect(
+      printersText(
+        {
+          checked: true,
+          selectedPrinter: 'Bambu Lab X2D 0.4 nozzle',
+          enabled: [
+            { vendor: 'BBL', model: 'Bambu Lab X2D', nozzles: ['0.4', '0.6'] },
+            { vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] },
+          ],
+          userPrinters: 1,
+          unsupportedGroup: 'shown',
+        },
+        'Bambu Studio',
+      ),
+    ).toBe(
+      'Printers added in Bambu Studio: X2D (0.4, 0.6 mm) · P1S (0.4 mm) · 1 printer preset of ' +
+        'your own. Selected: X2D 0.4 nozzle.',
+    );
+    expect(printersText(scan.compat, 'Bambu Studio')).toBe(
+      "Printer checks skipped: Bambu Studio's settings don't list the printers you've added.",
+    );
+  });
+
+  it('explains where the printer list comes from', () => {
+    expect(compatLines(elsewhere.compat!, 'Bambu Studio')).toEqual([
+      'Offered for: Bambu Lab P1S 0.4 nozzle.',
+      'This list comes from "Generic PLA @BBL P1S", the preset it is based on.',
+      'Bambu Studio shows it when you select Bambu Lab P1S 0.4 nozzle.',
     ]);
   });
 });

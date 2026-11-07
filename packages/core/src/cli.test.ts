@@ -30,7 +30,7 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
     const deps: Partial<CliDeps> = {
       stdout: (s) => (out += s),
       stderr: (s) => (err += s),
-      paths: { studioRoot: t.dir, backupsDir },
+      paths: { studioRoot: t.dir, orcaRoot: join(t.dir, 'no-orca'), backupsDir },
       isStudioRunning: async () => {
         onCheck?.();
         if (checkFails) throw new Error('tasklist failed');
@@ -88,7 +88,11 @@ describe('preset-doctor CLI', () => {
       const code = await main(['scan', name], {
         stdout: () => {},
         stderr: (s) => (err += s),
-        paths: { studioRoot: missingDefault, backupsDir: join(t.dir, 'backups') },
+        paths: {
+          studioRoot: missingDefault,
+          orcaRoot: missingDefault,
+          backupsDir: join(t.dir, 'backups'),
+        },
         isStudioRunning: async () => false,
       });
       expect(code).toBe(EXIT.failed);
@@ -309,5 +313,119 @@ describe('preset-doctor CLI', () => {
     const r = await s.run('backups', 'restore', '2020-01-01T00-00-00', '--yes');
     expect(r.code).toBe(EXIT.failed);
     expect(r.err).toContain('was not found');
+  });
+});
+
+describe('preset-doctor CLI with process and printer presets', () => {
+  it('scan: nests each status group by type when several types are shown', async () => {
+    const { run } = setup('types-bambu');
+    const r = await run('scan');
+    expect(r.code).toBe(EXIT.problems);
+    expect(r.out).toContain('Account: 1000000001 (13 presets)');
+    expect(r.out).toContain('Hidden in Studio (8)\n  Process:\n    Added Suffix ');
+    expect(r.out).toContain('  Printer:\n    Case Only Printer ');
+    expect(r.out).toContain('3 possible replacement(s); pick the printer you have in the app');
+    expect(r.out).toContain('My Printer 0.4 nozzle [base]');
+    expect(r.out).toContain('Custom printer, not based on another preset');
+    expect(r.out).toContain('Summary: 8 hidden, 0 broken, 1 OK with notes, 4 OK.');
+  });
+
+  it('scan --type: shows only those types, exits by them, and keeps --type in the hint', async () => {
+    const { run } = setup('types-bambu');
+    const printers = await run('scan', '--type', 'printer');
+    expect(printers.code).toBe(EXIT.problems);
+    expect(printers.out).not.toContain('Printer:');
+    expect(printers.out).not.toContain('Added Suffix');
+    expect(printers.out).toContain('Summary: 2 hidden, 0 broken, 0 OK with notes, 2 OK.');
+    expect(printers.out).toContain('--type printer --dry-run');
+
+    const filament = await run('scan', '--type', 'filament');
+    expect(filament.code).toBe(EXIT.ok);
+    expect(filament.out).toContain('Summary: 0 hidden, 0 broken, 0 OK with notes, 1 OK.');
+
+    const both = await run('scan', '--type', 'process,machine', '--type', 'process');
+    expect(both.out).toContain('Summary: 8 hidden, 0 broken, 1 OK with notes, 3 OK.');
+    expect(both.out).toContain('--type process,printer --dry-run');
+  });
+
+  it('rejects an unknown --type', async () => {
+    const { run } = setup('types-bambu');
+    const r = await run('scan', '--type', 'filament,gcode');
+    expect(r.code).toBe(EXIT.usage);
+    expect(r.err).toContain(
+      'Unknown preset type "gcode" for --type. Use filament, process or printer.',
+    );
+    expect((await run('scan', '--type')).code).toBe(EXIT.usage);
+  });
+
+  it('fix --type: plans repairs for those types only', async () => {
+    const { run, read } = setup('types-bambu');
+    const before = read('user/1000000001/process/Case Only.json');
+    const r = await run('fix', '--type', 'process', '--dry-run');
+    expect(r.code).toBe(EXIT.ok);
+    expect(r.out).toContain('3 file change(s) planned:');
+    expect(r.out).toContain(
+      'The new parent decides which printers Studio offers this process for: Bambu Lab X2D 0.4 nozzle.',
+    );
+    expect(r.out).toContain('  Old Code: Parent preset is missing');
+    expect(r.out).not.toContain('Case Only Printer');
+    expect(r.out).toContain('--type process --apply --yes');
+    expect(read('user/1000000001/process/Case Only.json')).toBe(before);
+
+    const machines = await run('fix', '--type', 'printer', '--dry-run');
+    expect(machines.out).toContain('Nothing to repair automatically.');
+    expect(machines.out).toContain('  Case Only Printer: Parent preset is missing');
+  });
+
+  it('fix --apply: repairs process presets on a temp copy', async () => {
+    const { run, read } = setup('types-bambu');
+    const r = await run('fix', '--type', 'process', '--apply', '--yes');
+    expect(r.code).toBe(EXIT.ok);
+    expect(read('user/1000000001/process/Case Only.json')).toContain(
+      '"inherits": "0.20mm Standard @BBL X1C"',
+    );
+    expect(read('user/1000000001/process/Name Mismatch.json')).toContain(
+      '"print_settings_id": "Name Mismatch"',
+    );
+    const again = await run('scan', '--type', 'process');
+    expect(again.out).toContain('Summary: 4 hidden, 0 broken, 0 OK with notes, 4 OK.');
+  });
+});
+
+describe('preset-doctor CLI with printer checks (R2/R3)', () => {
+  it('scan: lists unsupported presets in their own group, and still exits 0', async () => {
+    const { run } = setup('unsupported-bambu');
+    const r = await run('scan');
+    expect(r.code).toBe(EXIT.ok);
+    expect(r.out).toContain(
+      'Printers: Bambu Lab X2D (0.4, 0.6 mm), Bambu Lab P1S (0.4 mm), 1 printer preset of your ' +
+        'own; selected: Bambu Lab X2D 0.4 nozzle',
+    );
+    expect(r.out).toContain("Note: Some presets are for another printer you've added.");
+    expect(r.out).toContain('Loaded, but not offered for your printers (4)');
+    expect(r.out).toContain(
+      "On H2D                                   Only for printers you haven't added (Bambu Lab H2D 0.4 nozzle)",
+    );
+    expect(r.out).toContain("Made for the 0.8 mm nozzle, which you haven't added");
+    expect(r.out).toContain('Summary: 0 hidden, 0 broken, 4 unsupported, 0 OK with notes, 6 OK.');
+    expect(r.out).not.toContain('To preview repairs');
+    const json = JSON.parse((await run('scan', '--json')).out) as ScanResult;
+    expect(json.compat.checked).toBe(true);
+  });
+
+  it('fix: never plans anything for unsupported presets', async () => {
+    const { run } = setup('unsupported-bambu');
+    const r = await run('fix', '--dry-run');
+    expect(r.code).toBe(EXIT.ok);
+    expect(r.out).toContain('Nothing to repair automatically.');
+    expect(r.out).not.toContain('Not repaired automatically');
+  });
+
+  it('scan: prints nothing about printers when the conf lists none', async () => {
+    const { run } = setup('healthy');
+    const r = await run('scan');
+    expect(r.out).not.toContain('Printers:');
+    expect(r.out).not.toContain('Loaded, but not offered');
+    expect(r.out).not.toContain('unsupported');
   });
 });

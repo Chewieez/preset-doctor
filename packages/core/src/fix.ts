@@ -50,6 +50,9 @@ import {
   setJsonStringField,
   tryParseJsonFile,
 } from './jsonFile.js';
+import { processPrintersNote } from './rules/r1Process.js';
+import { slicerById } from './slicer.js';
+import { TERMS } from './terms.js';
 import type { Candidate, Change, Finding, PresetSummary, ScanResult } from './types.js';
 import { infoPathFor } from './userScan.js';
 
@@ -139,9 +142,13 @@ export async function planFixes(
       const oldName = summary.name;
       expectUnchanged(summary, 'name', json['name'], oldName);
       after = setJsonStringField(after, 'name', newName);
-      const ids = json['filament_settings_id'];
-      if (Array.isArray(ids) && ids[0] === oldName) {
-        after = setJsonArrayStringItem(after, 'filament_settings_id', 0, newName);
+      // Studio keeps the preset's own name here too: an array for filament, a string otherwise.
+      const ids = TERMS[typeOf(summary)].settingsIdKey;
+      const current = json[ids.key];
+      if (ids.shape === 'array0' && Array.isArray(current) && current[0] === oldName) {
+        after = setJsonArrayStringItem(after, ids.key, 0, newName);
+      } else if (ids.shape === 'string' && current === oldName) {
+        after = setJsonStringField(after, ids.key, newName);
       }
       notes.push(`rename it from "${oldName ?? ''}" to "${newName}"`);
     }
@@ -152,7 +159,13 @@ export async function planFixes(
     const info = newParent && updateBaseId ? await baseIdChange(fs, summary.path, newParent) : null;
     if (after !== before) {
       let description = `${capitalize(joinNotes(notes))}.`;
+      // A process is offered only for its parent's printers, so a new parent can change them.
+      if (newParent?.printers && typeOf(summary) === 'process') {
+        description += ` ${processPrintersNote(newParent.printers)}`;
+      }
       if (info?.skipped !== undefined) description += ` ${info.skipped}`;
+      // Older scan results (and tests) may not say which slicer; that is Bambu Studio.
+      description = slicerById(scan.slicer ?? 'bambu').reword(description);
       changes.push({ path: summary.path, before, after, description });
     }
     if (info?.change) changes.push(info.change);
@@ -241,17 +254,21 @@ async function readExact(fs: PresetFs, path: string): Promise<string> {
  * orphan would then point at a name that no longer exists.
  */
 function checkRenamedParents(scan: ScanResult, choices: readonly FixChoice[]): void {
+  // Keyed by type too: parents resolve within one type, so a process may share a filament's name.
+  const key = (p: PresetSummary, name: string): string => `${typeOf(p)}\u0000${name}`;
   const renamed = new Map<string, string>();
   for (const c of choices) {
-    const name = c.rename ? scan.presets.find((p) => p.path === c.presetPath)?.name : undefined;
-    if (name !== undefined) renamed.set(name, c.presetPath);
+    const p = c.rename ? scan.presets.find((x) => x.path === c.presetPath) : undefined;
+    if (p?.name !== undefined) renamed.set(key(p, p.name), c.presetPath);
   }
   for (const c of choices) {
-    if (c.candidateName === undefined || !renamed.has(c.candidateName)) continue;
     const child = scan.presets.find((p) => p.path === c.presetPath);
+    if (c.candidateName === undefined || !child || !renamed.has(key(child, c.candidateName))) {
+      continue;
+    }
     throw new FixError(
       `"${c.candidateName}" is renamed in the same repair, so it can't also be the new parent ` +
-        `of "${child?.name ?? c.presetPath}". Leave out one of the two.`,
+        `of "${child.name ?? c.presetPath}". Leave out one of the two.`,
     );
   }
 }
@@ -384,6 +401,11 @@ export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Pr
     written.push(c.path);
   }
   return { written };
+}
+
+/** A scan from before preset types (or a hand-made one in a test) has only filament rows. */
+function typeOf(p: PresetSummary): PresetSummary['type'] {
+  return p.type ?? 'filament';
 }
 
 function joinNotes(notes: string[]): string {

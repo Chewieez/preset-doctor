@@ -1,0 +1,18 @@
+{
+    "filament_cooling_final_speed": [
+        "3.5"
+    ],
+    "filament_cooling_initial_speed": [
+        "10"
+    ],
+    "filament_cooling_moves": [
+        "2"
+    ],
+    "filament_settings_id": [
+        "Toolchanger Child"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @MyToolChanger",
+    "name": "Toolchanger Child",
+    "version": "2.3.2.0"
+}

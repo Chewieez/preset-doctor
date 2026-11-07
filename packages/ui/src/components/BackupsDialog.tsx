@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { BackupInfo, Platform, StudioState } from '../contract';
 import { api, AppError, call, messageOf } from '../api';
+import { SLICER_TEXT } from '../model';
+import { useSlicer } from '../slicerContext';
 import { Dialog } from './Dialog';
 
 interface Props {
@@ -11,7 +13,8 @@ interface Props {
   studio: StudioState | 'checking';
   /** Web: the "I've closed Bambu Studio" checkbox, which stands in for the process check. */
   studioGate?: ReactNode;
-  onRestored: (backupId: string, restoredCount: number) => void;
+  /** `skipped`: OrcaSlicer sync files left out (see RestoreResult.skipped). */
+  onRestored: (backupId: string, restoredCount: number, skipped: number) => void;
   /**
    * The restore wrote some files (`written`) and then failed; the message names the backup that
    * undoes it.
@@ -37,7 +40,10 @@ export function BackupsDialog({
   onClose,
 }: Props) {
   const web = platform === 'web';
+  const slicer = useSlicer();
   const [backups, setBackups] = useState<BackupInfo[] | null>(null);
+  /** Backups of the other slicer's folder are listed only on request; they can't go back here. */
+  const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   /** Backup the user is asked about a second time, because it came from another folder. */
@@ -53,7 +59,7 @@ export function BackupsDialog({
     setError(null);
     try {
       const r = await call(api.restore(root, id, { allowOtherSource }));
-      onRestored(r.backupId, r.restoredCount);
+      onRestored(r.backupId, r.restoredCount, r.skipped.length);
     } catch (e) {
       if (e instanceof AppError && e.code === 'other-source') {
         setOtherSource({ id, message: e.message });
@@ -66,6 +72,11 @@ export function BackupsDialog({
       setRestoring(false);
     }
   };
+
+  // listBackups reads a backup that doesn't say as Bambu Studio's.
+  const ofThisSlicer = (b: BackupInfo): boolean => b.slicer === slicer.id;
+  const otherCount = backups?.filter((b) => !ofThisSlicer(b)).length ?? 0;
+  const shown = backups && (showAll ? backups : backups.filter(ofThisSlicer));
 
   const download = async (id: string): Promise<void> => {
     setError(null);
@@ -112,22 +123,32 @@ export function BackupsDialog({
       )}
       {studioGate}
       {!web && studio !== 'closed' && (
-        <p className="warn-text">Close Bambu Studio to restore a backup.</p>
+        <p className="warn-text">Close {slicer.name} to restore a backup.</p>
       )}
       {error && <p className="error-text">{error}</p>}
       {backups === null && !error && <p className="muted">Loading…</p>}
-      {backups?.length === 0 && (
+      {shown?.length === 0 && (
         <p className="muted">No backups yet. One is made before the first repair.</p>
       )}
-      {backups && backups.length > 0 && (
+      {otherCount > 0 && (
+        <label className="option" data-testid="show-all-backups">
+          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+          <span>
+            Show all backups ({otherCount} from another slicer's folder, which can't be restored
+            here)
+          </span>
+        </label>
+      )}
+      {shown && shown.length > 0 && (
         <ul className="backup-list" data-testid="backup-list">
-          {backups.map((b) => (
+          {shown.map((b) => (
             <li key={b.id}>
               <div>
                 <strong>{formatWhen(b)}</strong>
                 <span className="muted">
                   {b.reason ? REASON[b.reason] : 'Backup'} · {b.fileCount} files ·{' '}
                   {formatBytes(b.bytes)}
+                  {!ofThisSlicer(b) && ` · ${SLICER_TEXT[b.slicer].name}`}
                 </span>
                 <span className="muted backup-source">
                   From {b.sourceRoot ? <code>{b.sourceRoot}</code> : 'an unknown folder'}
@@ -193,7 +214,7 @@ export function BackupsDialog({
                   <button
                     type="button"
                     className="btn"
-                    disabled={restoring || studio !== 'closed'}
+                    disabled={restoring || studio !== 'closed' || !ofThisSlicer(b)}
                     onClick={() => setConfirming(b.id)}
                   >
                     Restore…

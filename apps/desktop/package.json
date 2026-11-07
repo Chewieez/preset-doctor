@@ -3,7 +3,7 @@
   "productName": "Preset Doctor",
   "version": "0.1.0",
   "private": true,
-  "description": "Finds and repairs Bambu Studio filament presets that disappeared after an update.",
+  "description": "Finds and repairs Bambu Studio and OrcaSlicer presets that disappeared after an update.",
   "author": "Preset Doctor contributors",
   "license": "MIT",
   "main": "./out/main/index.js",

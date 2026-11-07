@@ -97,6 +97,41 @@ describe('R4 malformed presets', () => {
     expect(f?.explanation).toContain('so that preset is hidden. Fix it first');
   });
 
+  it('words process and printer findings for their own list and folder', async () => {
+    const fs = fakeStudio(
+      [{ type: 'process', name: '0.20mm Standard @BBL X1C', compatible_printers: [] }],
+      [
+        { type: 'process', file: 'No Name', inherits: '0.20mm Standard @BBL X1C', info: INFO },
+        { type: 'machine', file: 'Nameless', base: true, info: INFO },
+      ],
+    );
+    const found = await r4(fs);
+    expect(brief(found)).toEqual([
+      'No Name: error/broken Preset has no name',
+      'Nameless: error/broken Preset has no name',
+    ]);
+    expect(found[0]).toMatchObject({ presetType: 'process' });
+    expect(found[0]?.explanation).toContain('Studio has nothing to show in the process list.');
+    expect(found[1]?.explanation).toContain('Studio has nothing to show in the printer list.');
+  });
+
+  it('only checks renames against names of the same type', async () => {
+    const fs = fakeStudio(
+      [{ name: 'Generic PLA @BBL X2D', compatible_printers: [] }],
+      [
+        {
+          type: 'process',
+          file: 'Generic PLA @BBL X2D',
+          name: 'Mine',
+          inherits: '0.20mm Standard @BBL X1C',
+          info: INFO,
+        },
+      ],
+    );
+    const f = (await r4(fs)).find((x) => x.title !== 'No sync file (.info)');
+    expect(f?.proposedFix).toMatchObject({ kind: 'renamePreset', newName: 'Generic PLA @BBL X2D' });
+  });
+
   it('does not rename onto a system preset name', async () => {
     const fs = fakeStudio(SYSTEM, [
       { file: 'Generic PLA @BBL X2D', name: 'Mine', inherits: 'Generic PLA @BBL X2D', info: INFO },

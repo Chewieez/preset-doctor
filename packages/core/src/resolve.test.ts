@@ -36,6 +36,7 @@ async function fixtureContext(
 function userPreset(fileStem: string, json: Record<string, unknown>, isBase = false): UserPreset {
   const path = `user/1/filament/${isBase ? 'base/' : ''}${fileStem}.json`;
   return {
+    type: 'filament',
     accountId: '1',
     path,
     fileStem,

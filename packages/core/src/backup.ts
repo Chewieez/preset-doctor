@@ -10,13 +10,17 @@ import {
   type PresetFs,
 } from './fs.js';
 import { isRecord } from './jsonFile.js';
+import { slicerById, slicerFolder } from './slicer.js';
+import type { SlicerId } from './types.js';
 
 /**
  * Backups of the whole `user/` folder as one zip per backup, stored in a separate backups folder.
  *
- * `srcFs` is rooted at the Bambu Studio folder (the one that contains `user/` and `system/`).
- * `destFs` is rooted at the backups folder. Zip entries keep their `user/...` paths, so a
- * backup can also be unzipped by hand straight into the Bambu Studio folder.
+ * `srcFs` is rooted at the slicer's data folder (Bambu Studio or OrcaSlicer: the one that contains
+ * `user/` and `system/`). `destFs` is rooted at the backups folder. Zip entries keep their
+ * `user/...` paths, so a backup can also be unzipped by hand straight into the data folder. The
+ * manifest says which slicer's folder it came from; a restore into the other slicer's folder is
+ * refused.
  */
 
 const USER_DIR = 'user';
@@ -41,6 +45,8 @@ export interface BackupInfo {
   sourceRoot?: string;
   /** Account folders under user/ in the backup. */
   accounts?: string[];
+  /** The slicer whose folder it came from; 'bambu' for backups that don't say (before v0.2). */
+  slicer: SlicerId;
 }
 
 export interface BackupOptions {
@@ -48,6 +54,8 @@ export interface BackupOptions {
   reason?: BackupReason;
   /** Recorded in the manifest so a restore can check it goes back where it came from. */
   sourceRoot?: string;
+  /** The slicer whose folder is backed up. Default 'bambu'. */
+  slicer?: SlicerId;
 }
 
 interface Manifest {
@@ -58,11 +66,13 @@ interface Manifest {
   fileCount: number;
   sourceRoot?: string;
   accounts?: string[];
+  /** Absent in backups made before v0.2, which are all of Bambu Studio folders. */
+  slicer?: SlicerId;
 }
 
 /** What a manifest read back from a zip says: only the fields that passed validation. */
 type ManifestInfo = Pick<Manifest, 'fileCount'> &
-  Partial<Pick<Manifest, 'createdAt' | 'reason' | 'sourceRoot' | 'accounts'>>;
+  Partial<Pick<Manifest, 'createdAt' | 'reason' | 'sourceRoot' | 'accounts' | 'slicer'>>;
 
 const REASONS: ReadonlySet<unknown> = new Set<BackupReason>([
   'before-fix',
@@ -81,6 +91,24 @@ export class BackupSourceError extends Error {
         "mix another folder's presets into this one, so nothing was changed.",
     );
     this.name = 'BackupSourceError';
+  }
+}
+
+/**
+ * A restore would put a backup of one slicer's folder into the other slicer's folder. There is no
+ * override: the two hold presets for different system profiles.
+ */
+export class BackupSlicerError extends Error {
+  constructor(
+    readonly backupSlicer: SlicerId,
+    readonly targetSlicer: SlicerId,
+  ) {
+    super(
+      `This backup was made from ${slicerFolder(backupSlicer)}, and this is ` +
+        `${slicerFolder(targetSlicer)}. Restoring it here would mix one ` +
+        "slicer's presets into the other's, so nothing was changed.",
+    );
+    this.name = 'BackupSlicerError';
   }
 }
 
@@ -154,7 +182,8 @@ export async function createBackup(
   const now = options.now ?? new Date();
   const reason = options.reason ?? 'before-fix';
   if (!(await srcFs.exists(USER_DIR))) {
-    throw new Error(`There is no "${USER_DIR}" folder to back up in this Bambu Studio folder.`);
+    const slicer = slicerById(options.slicer ?? 'bambu').displayName;
+    throw new Error(`There is no "${USER_DIR}" folder to back up in this ${slicer} folder.`);
   }
 
   const { files, dirs } = await readTree(srcFs, USER_DIR);
@@ -171,6 +200,7 @@ export async function createBackup(
     fileCount: files.size,
     ...(options.sourceRoot !== undefined ? { sourceRoot: options.sourceRoot } : {}),
     accounts,
+    slicer: options.slicer ?? 'bambu',
   };
 
   const zippable: Zippable = {};
@@ -217,7 +247,13 @@ export async function listBackups(destFs: PresetFs): Promise<BackupInfo[]> {
     const id = e.name.slice(0, -'.zip'.length);
     if (!isBackupId(id)) continue;
     const bytes = await destFs.readBytes(e.name);
-    let info: BackupInfo = { id, path: e.name, fileCount: 0, bytes: bytes.length };
+    let info: BackupInfo = {
+      id,
+      path: e.name,
+      fileCount: 0,
+      bytes: bytes.length,
+      slicer: 'bambu',
+    };
     try {
       const manifest = readManifest(bytes);
       if (manifest) info = infoFromManifest(id, e.name, bytes.length, manifest);
@@ -249,6 +285,11 @@ export interface RestoreOptions {
   expectedRoot?: string;
   /** Restore even when the backup came from another folder. */
   allowOtherSource?: boolean;
+  /**
+   * The slicer whose folder is restored into. A backup of the other slicer's folder throws
+   * BackupSlicerError, whatever allowOtherSource says. Default 'bambu'.
+   */
+  slicer?: SlicerId;
 }
 
 export interface RestoreResult {
@@ -256,6 +297,12 @@ export interface RestoreResult {
   safetyBackup: BackupInfo | null;
   /** Number of files written back (files that already matched the backup are not counted). */
   restoredCount: number;
+  /**
+   * OrcaSlicer only: sync files (.info) that were not put back because their preset (.json) is
+   * neither in the backup nor on disk. Orca 2.5 asks its cloud to delete the preset of a lone
+   * .info with a setting_id (src/slic3r/Utils/CloudDeleteQueue.cpp:128-168@v2.5.0).
+   */
+  skipped: string[];
 }
 
 /**
@@ -309,11 +356,16 @@ export async function restoreBackup(
   const { files, dirs } = unzipEntries(zip);
 
   let source: string | undefined;
+  let backupSlicer: SlicerId = 'bambu';
   try {
-    source = readManifest(zip)?.sourceRoot;
+    const manifest = readManifest(zip);
+    source = manifest?.sourceRoot;
+    backupSlicer = manifest?.slicer ?? 'bambu';
   } catch {
     // Unreadable manifest: the source is unknown, as for backups made before it was recorded.
   }
+  const targetSlicer = options.slicer ?? 'bambu';
+  if (backupSlicer !== targetSlicer) throw new BackupSlicerError(backupSlicer, targetSlicer);
   if (
     options.expectedRoot !== undefined &&
     source !== undefined &&
@@ -328,8 +380,14 @@ export async function restoreBackup(
         reason: 'before-restore',
         ...(options.now ? { now: options.now } : {}),
         ...(options.expectedRoot !== undefined ? { sourceRoot: options.expectedRoot } : {}),
+        slicer: targetSlicer,
       })
     : null;
+  const { order, skipped } = await restoreOrder(
+    srcFs,
+    files,
+    slicerById(targetSlicer).loneInfoIsCloudDelete,
+  );
 
   const restored: string[] = [];
   let at = USER_DIR;
@@ -340,7 +398,8 @@ export async function restoreBackup(
       at = d;
       await srcFs.mkdir(d);
     }
-    for (const [p, data] of files) {
+    for (const p of order) {
+      const data = files.get(p)!;
       at = p;
       before = await tryRead(srcFs, p);
       // Files that already match are skipped: fewer writes, fewer chances to stop part-way.
@@ -359,7 +418,47 @@ export async function restoreBackup(
     }
     throw new RestoreError(at, restored, safetyBackup, err);
   }
-  return { safetyBackup, restoredCount: restored.length };
+  return { safetyBackup, restoredCount: restored.length, skipped };
+}
+
+/**
+ * The order files are written back in: every other file before the sync files (.info), so a
+ * restore that stops part-way never leaves a sync file put back without its preset. With
+ * `loneInfoIsCloudDelete` (OrcaSlicer), a sync file whose preset is neither in the backup nor on
+ * disk is skipped.
+ */
+async function restoreOrder(
+  srcFs: PresetFs,
+  files: ReadonlyMap<string, Uint8Array>,
+  loneInfoIsCloudDelete: boolean,
+): Promise<{ order: string[]; skipped: string[] }> {
+  const isInfo = (p: string): boolean => p.toLowerCase().endsWith('.info');
+  const inBackup = new Set([...files.keys()].map((p) => p.toLowerCase()));
+  const order = [...files.keys()].filter((p) => !isInfo(p));
+  const skipped: string[] = [];
+  for (const p of files.keys()) {
+    if (!isInfo(p)) continue;
+    const json = `${p.slice(0, -'.info'.length)}.json`;
+    if (
+      loneInfoIsCloudDelete &&
+      !inBackup.has(json.toLowerCase()) &&
+      !(await existsOrUnknown(srcFs, json))
+    ) {
+      skipped.push(p);
+      continue;
+    }
+    order.push(p);
+  }
+  return { order, skipped };
+}
+
+/** exists(), where an error counts as "there": a doubt never makes a restore skip a file. */
+async function existsOrUnknown(fs: PresetFs, path: string): Promise<boolean> {
+  try {
+    return await fs.exists(path);
+  } catch {
+    return true;
+  }
 }
 
 async function tryRead(fs: PresetFs, path: string): Promise<Uint8Array | undefined> {
@@ -478,18 +577,19 @@ function readManifest(zip: Uint8Array): ManifestInfo | null {
     return null;
   }
   const info: ManifestInfo = { fileCount: m['fileCount'] };
-  const { createdAt, reason, sourceRoot, accounts } = m;
+  const { createdAt, reason, sourceRoot, accounts, slicer } = m;
   if (typeof createdAt === 'string') info.createdAt = createdAt;
   if (REASONS.has(reason)) info.reason = reason as BackupReason;
   if (typeof sourceRoot === 'string') info.sourceRoot = sourceRoot;
   if (Array.isArray(accounts) && accounts.every((a) => typeof a === 'string')) {
     info.accounts = accounts;
   }
+  if (slicer === 'bambu' || slicer === 'orca') info.slicer = slicer;
   return info;
 }
 
 function infoFromManifest(id: string, path: string, bytes: number, m: ManifestInfo): BackupInfo {
-  const info: BackupInfo = { id, path, fileCount: m.fileCount, bytes };
+  const info: BackupInfo = { id, path, fileCount: m.fileCount, bytes, slicer: m.slicer ?? 'bambu' };
   if (m.createdAt !== undefined) info.createdAt = m.createdAt;
   if (m.reason !== undefined) info.reason = m.reason;
   if (m.sourceRoot !== undefined) info.sourceRoot = m.sourceRoot;

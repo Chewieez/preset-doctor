@@ -1,0 +1,34 @@
+{
+    "bridge_speed": [
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50"
+    ],
+    "default_acceleration": [
+        "8000",
+        "8000",
+        "8000",
+        "8000",
+        "8000",
+        "8000",
+        "8000"
+    ],
+    "enable_overhang_speed": [
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "1",
+        "1"
+    ],
+    "from": "User",
+    "inherits": "0.16mm Standard @BBL H2D",
+    "name": "On H2D",
+    "print_settings_id": "On H2D",
+    "version": "2.8.0.6"
+}

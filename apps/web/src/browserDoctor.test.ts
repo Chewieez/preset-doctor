@@ -420,3 +420,81 @@ describe('BrowserDoctor', () => {
     expect(error(await d.pickFolder()).message).toMatch(/Chrome or Edge/);
   });
 });
+
+describe('BrowserDoctor with an OrcaSlicer copy', () => {
+  const ORCA_FIXTURE = fileURLToPath(
+    new URL('../../../packages/core/src/__fixtures__/orca', import.meta.url),
+  );
+
+  it('scans it as OrcaSlicer, and tags its backups', async () => {
+    const orca = fakeFolderFromDisk(COPY, ORCA_FIXTURE);
+    const d = makeDoctor();
+    const root = await picked(d, orca);
+    const { result, defaults } = ok(await d.scan(root));
+    expect(result.slicer).toBe('orca');
+    const { planId } = ok(await d.plan(defaults, { updateBaseId: true }));
+    const applied = ok(await d.apply(planId));
+    expect(applied.backup.slicer).toBe('orca');
+    const restored = ok(await d.restore(root, applied.backup.id));
+    expect(restored.skipped).toEqual(['user/default/filament/Lone.info']);
+  });
+
+  it('uses an OrcaSlicer folder copied whole into the picked folder', async () => {
+    const outer = fakeFolder('Documents');
+    outer.children.set('OrcaSlicer', fakeFolderFromDisk('OrcaSlicer', ORCA_FIXTURE));
+    const d = makeDoctor();
+    const root = await picked(d, outer);
+    expect(root).toBe('OrcaSlicer');
+    expect(ok(await d.scan(root)).result.slicer).toBe('orca');
+  });
+
+  it('names OrcaSlicer files in what to copy', async () => {
+    const d = makeDoctor();
+    const cases: [FakeDir, RegExp][] = [
+      [
+        fakeFolder('NoSystem', {
+          'OrcaSlicer.conf': '{}',
+          'user/default/filament/a.json': '{}',
+        }),
+        /has no system presets .*%APPDATA%\\OrcaSlicer/,
+      ],
+      [
+        fakeFolder('NoUser', { 'system/OrcaFilamentLibrary.json': '{}' }),
+        /no "user" folder\. Copy the "user" folder from %APPDATA%\\OrcaSlicer/,
+      ],
+      [
+        fakeFolder('Both', { 'BambuStudio.conf': '{}', 'OrcaSlicer.conf': '{}' }),
+        /both Bambu Studio and OrcaSlicer/,
+      ],
+    ];
+    for (const [folder, message] of cases) {
+      const root = await picked(d, folder);
+      const e = error(await d.scan(root));
+      expect(e.code).toBe('scan-failed');
+      expect(e.message).toMatch(message);
+    }
+  });
+
+  it('warns when OrcaSlicer.conf was not copied, naming OrcaSlicer', async () => {
+    const orca = fakeFolderFromDisk(COPY, ORCA_FIXTURE);
+    orca.children.delete('OrcaSlicer.conf');
+    const d = makeDoctor();
+    const { result } = ok(await d.scan(await picked(d, orca)));
+    expect(result.warnings.join(' ')).toMatch(
+      /OrcaSlicer\.conf wasn't copied.*save the preset in OrcaSlicer\./,
+    );
+  });
+
+  it('refuses a Bambu Studio backup in an OrcaSlicer copy', async () => {
+    const d = makeDoctor();
+    const bambuRoot = await picked(d);
+    const s = ok(await d.scan(bambuRoot));
+    const applied = ok(await d.apply(ok(await d.plan(s.defaults, { updateBaseId: true })).planId));
+    // The same folder, now holding OrcaSlicer's files.
+    copy.children.delete('BambuStudio.conf');
+    const conf = new FakeFile('OrcaSlicer.conf');
+    conf.data = new TextEncoder().encode('{}');
+    copy.children.set('OrcaSlicer.conf', conf);
+    expect(error(await d.restore(bambuRoot, applied.backup.id)).code).toBe('other-slicer');
+  });
+});

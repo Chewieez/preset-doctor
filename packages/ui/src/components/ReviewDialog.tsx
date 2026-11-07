@@ -1,5 +1,6 @@
 import type { PlanPayload, StudioState } from '../contract';
 import { presetFilesIn } from '../model';
+import { useSlicer } from '../slicerContext';
 import { Dialog } from './Dialog';
 import { DiffView } from './DiffView';
 
@@ -17,6 +18,7 @@ interface Props {
 
 export function ReviewDialog(props: Props) {
   const { plan } = props;
+  const slicer = useSlicer();
   const presets = plan ? presetFilesIn(plan.changes.map((c) => c.path)) : 0;
   const canApply =
     plan !== null && plan.changes.length > 0 && props.studio === 'closed' && !props.applying;
@@ -28,7 +30,7 @@ export function ReviewDialog(props: Props) {
       footer={
         <>
           {props.studio !== 'closed' && (
-            <span className="warn-text">Close Bambu Studio before repairing.</span>
+            <span className="warn-text">Close {slicer.name} before repairing.</span>
           )}
           <button type="button" className="btn" onClick={props.onClose} disabled={props.applying}>
             Cancel
@@ -60,7 +62,7 @@ export function ReviewDialog(props: Props) {
         />
         <span>
           Also update the preset's sync file (<code>.info</code>) to point at the new parent
-          <span className="muted"> (recommended; Bambu Studio does the same when you save)</span>
+          <span className="muted"> (recommended; {slicer.name} does the same when you save)</span>
         </span>
       </label>
       {props.loading && <p className="muted">Preparing changes…</p>}

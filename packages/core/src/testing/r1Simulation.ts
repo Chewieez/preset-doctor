@@ -84,7 +84,7 @@ function nozzlesFor(compat: readonly string[] | null, model: string): string[] {
 }
 
 /** The index without one name, as if Bambu had dropped that preset. */
-function without(sys: SystemIndex, hidden: string): SystemIndex {
+export function without(sys: SystemIndex, hidden: string): SystemIndex {
   const entries = new Map(sys.entries);
   entries.delete(hidden);
   return {
@@ -108,6 +108,7 @@ function orphan(inherits: string, compat: string[] | null, baseId: string | null
   const json: Record<string, unknown> = { from: 'User', inherits, name: 'Simulated orphan' };
   if (compat) json['compatible_printers'] = compat;
   const preset: UserPreset = {
+    type: 'filament',
     accountId: '1000000001',
     path: 'user/1000000001/filament/Simulated orphan.json',
     fileStem: 'Simulated orphan',
@@ -171,7 +172,7 @@ async function buildScenarios(system: SystemIndex): Promise<Scenario[]> {
   return out;
 }
 
-function candidatesOf(f: Finding | null) {
+export function candidatesOf(f: Finding | null) {
   return f?.proposedFix?.kind === 'setInherits' ? f.proposedFix.candidates : [];
 }
 

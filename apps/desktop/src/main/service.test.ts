@@ -20,7 +20,13 @@ let studio: () => Promise<boolean>;
 
 function makeService(fake: boolean | null = null, extra: Partial<ServiceDeps> = {}): DoctorService {
   return new DoctorService({
-    config: { root, backupsDir: backups, testMode: true, fakeStudioRunning: fake },
+    config: {
+      root,
+      slicerRoots: { bambu: join(work, 'no-bambu'), orca: join(work, 'no-orca') },
+      backupsDir: backups,
+      testMode: true,
+      fakeStudioRunning: fake,
+    },
     isStudioRunning: () => studio(),
     version: '9.9.9',
     donationUrl: '',
@@ -362,5 +368,96 @@ describe('DoctorService', () => {
     const { planId } = ok(await s.plan(defaults, { updateBaseId: true }));
     expect(errCode(await s.apply(planId))).toBe('studio-running');
     expect(ok(await s.studioStatus())).toBe('running');
+  });
+});
+
+describe('DoctorService with OrcaSlicer', () => {
+  const ORCA_FIXTURE = fileURLToPath(
+    new URL('../../../../packages/core/src/__fixtures__/orca', import.meta.url),
+  );
+  let orcaRoot: string;
+  let running: string[];
+
+  beforeEach(async () => {
+    orcaRoot = join(work, 'OrcaSlicer');
+    await cp(ORCA_FIXTURE, orcaRoot, { recursive: true });
+    running = [];
+  });
+
+  const service = (startRoot = root): DoctorService =>
+    new DoctorService({
+      config: {
+        root: startRoot,
+        slicerRoots: { bambu: root, orca: orcaRoot },
+        backupsDir: backups,
+        testMode: true,
+        fakeStudioRunning: null,
+      },
+      isStudioRunning: (slicer) => Promise.resolve(running.includes(slicer)),
+      version: '9.9.9',
+      donationUrl: '',
+    });
+
+  it('lists both slicers, and scans the other default folder without picking it', async () => {
+    const s = service();
+    const cfg = ok(await s.getConfig());
+    expect(cfg.slicers).toEqual([
+      { id: 'bambu', displayName: 'Bambu Studio', root, exists: true },
+      { id: 'orca', displayName: 'OrcaSlicer', root: orcaRoot, exists: true },
+    ]);
+    const { result } = ok(await s.scan(orcaRoot, undefined));
+    expect(result.slicer).toBe('orca');
+    expect(result.slicerVersion).toBe('2.3.2-rc');
+  });
+
+  it('checks the slicer of the folder it writes to, and names it', async () => {
+    const s = service();
+    const { defaults } = ok(await s.scan(orcaRoot, undefined));
+    running = ['bambu'];
+    const { planId } = ok(await s.plan(defaults, {}));
+    const applied = ok(await s.apply(planId));
+    expect(applied.backup.slicer).toBe('orca');
+
+    running = ['orca'];
+    expect(ok(await s.studioStatus())).toBe('running');
+    ok(await s.scan(orcaRoot, undefined));
+    const renamed = {
+      presetPath: 'user/default/filament/Renamed.json',
+      candidateName: 'Generic ABS @MyToolChanger',
+    };
+    const r = await s.apply(ok(await s.plan([renamed], {})).planId);
+    expect(r.ok ? '' : r.error.message).toMatch(/^OrcaSlicer is open\./);
+    expect(errCode(await s.restore(orcaRoot, applied.backup.id))).toBe('studio-running');
+  });
+
+  it("refuses to restore one slicer's backup into the other slicer's folder", async () => {
+    const s = service();
+    const { defaults } = ok(await s.scan(orcaRoot, undefined));
+    const applied = ok(await s.apply(ok(await s.plan(defaults, {})).planId));
+    const r = await s.restore(root, applied.backup.id, { allowOtherSource: true });
+    expect(errCode(r)).toBe('other-slicer');
+    expect(r.ok ? '' : r.error.message).toMatch(/made from an OrcaSlicer folder/);
+    const back = ok(await s.restore(orcaRoot, applied.backup.id));
+    expect(back.skipped).toEqual(['user/default/filament/Lone.info']);
+  });
+
+  it('accepts a picked system\\ folder of OrcaSlicer', async () => {
+    expect(await service().adoptFolder(join(orcaRoot, 'system'))).toBe(orcaRoot);
+  });
+
+  it('starts on the OrcaSlicer folder when there is no Bambu Studio folder', async () => {
+    const s = new DoctorService({
+      config: {
+        root: join(work, 'missing'),
+        slicerRoots: { bambu: join(work, 'missing'), orca: orcaRoot },
+        backupsDir: backups,
+        testMode: false,
+        fakeStudioRunning: null,
+      },
+      isStudioRunning: () => Promise.resolve(false),
+      version: '9.9.9',
+      donationUrl: '',
+    });
+    expect(ok(await s.getConfig())).toMatchObject({ root: orcaRoot, rootExists: true });
   });
 });

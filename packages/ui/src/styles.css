@@ -15,6 +15,8 @@
   --hidden-bg: #fff1dc;
   --broken-fg: #b42318;
   --broken-bg: #fde9e7;
+  --unsupported-fg: #6b5300;
+  --unsupported-bg: #fbf0b8;
   --info-fg: #1f4fbf;
   --info-bg: #e7efff;
   --ok-fg: #17733b;
@@ -49,6 +51,8 @@
     --hidden-bg: #3d2a12;
     --broken-fg: #ff8a80;
     --broken-bg: #43201d;
+    --unsupported-fg: #f0d264;
+    --unsupported-bg: #352d0c;
     --info-fg: #93b4ff;
     --info-bg: #1d2a47;
     --ok-fg: #74d69a;
@@ -206,6 +210,15 @@ code {
   font-size: 13px;
 }
 
+.slicer-switch,
+.guide-head .segmented {
+  align-self: flex-start;
+}
+
+.guide-head .segmented {
+  margin-top: 10px;
+}
+
 .header-row {
   display: flex;
   gap: 16px;
@@ -350,6 +363,12 @@ select {
   color: var(--info-fg);
 }
 
+/* Loaded but not offered for the added printers: amber, apart from the orange "hidden". */
+.status-unsupported {
+  background: var(--unsupported-bg);
+  color: var(--unsupported-fg);
+}
+
 .conf-high {
   background: var(--ok-bg);
   color: var(--ok-fg);
@@ -470,6 +489,23 @@ select {
   font-size: 13px;
 }
 
+/* Printers strip: which printers are added, above the table */
+
+.printers-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.printers-strip .printers-line {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.printers-strip .banner {
+  align-items: center;
+}
+
 /* Toolbar */
 
 .toolbar {
@@ -501,6 +537,11 @@ select {
 .count.broken {
   background: var(--broken-bg);
   color: var(--broken-fg);
+}
+
+.count.unsupported {
+  background: var(--unsupported-bg);
+  color: var(--unsupported-fg);
 }
 
 .count.info {
@@ -583,6 +624,24 @@ select {
 
 .search {
   width: 220px;
+}
+
+/* Preset-type tabs above the table (only when the account has more than one type). */
+.type-tabs {
+  padding: 10px 12px 0;
+}
+
+.tab-badge {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  background: var(--hidden-bg);
+  color: var(--hidden-fg);
 }
 
 .table-scroll {
@@ -758,6 +817,26 @@ select {
 .candidate-reason {
   color: var(--muted);
   font-size: 13px;
+}
+
+.printers-section ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.candidate-printers {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.link-button {
+  font: inherit;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 .rename-toggle,

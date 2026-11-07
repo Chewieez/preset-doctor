@@ -20,9 +20,9 @@ describe('infoPathFor', () => {
 describe('listAccounts', () => {
   it('lists multi-account with most presets first, base/ included (F7)', async () => {
     expect(await listAccounts(fixture('multi-account'))).toEqual([
-      { id: '1000000001', presetCount: 6 },
-      { id: '1000000002', presetCount: 3 },
-      { id: 'default', presetCount: 0 },
+      { id: '1000000001', presetCount: 6, byType: { filament: 6, process: 0, machine: 0 } },
+      { id: '1000000002', presetCount: 3, byType: { filament: 3, process: 0, machine: 0 } },
+      { id: 'default', presetCount: 0, byType: { filament: 0, process: 0, machine: 0 } },
     ]);
   });
 
@@ -30,7 +30,7 @@ describe('listAccounts', () => {
     expect(await listAccounts(memFs({ 'BambuStudio.conf': '{}' }))).toEqual([]);
   });
 
-  it('ignores stray files and non-json entries', async () => {
+  it('ignores stray files and non-json entries, and counts every preset type', async () => {
     const fs = memFs({
       'user/notes.txt': 'x',
       'user/1/filament/A.json': '{}',
@@ -38,7 +38,9 @@ describe('listAccounts', () => {
       'user/1/filament/readme.txt': '',
       'user/1/machine/M.json': '{}',
     });
-    expect(await listAccounts(fs)).toEqual([{ id: '1', presetCount: 1 }]);
+    expect(await listAccounts(fs)).toEqual([
+      { id: '1', presetCount: 2, byType: { filament: 1, process: 0, machine: 1 } },
+    ]);
   });
 
   it('breaks ties: numeric ids before default, then by id', async () => {
@@ -66,6 +68,19 @@ describe('scanUser on fixtures', () => {
       expect(serializeInfoFile(p.info!)).toBe(p.infoRaw);
       expect(getInfoValue(p.info!, 'user_id')).toBe(ACCOUNT);
     }
+  });
+
+  it('reads every type from its own folder: filament, process, then machine', async () => {
+    const presets = await scanUser(fixture('types-bambu'), ACCOUNT);
+    expect(presets.map((p) => `${p.type}${p.isBase ? '/base' : ''}`)).toEqual([
+      'filament',
+      ...Array(8).fill('process'),
+      'machine',
+      'machine',
+      'machine',
+      'machine/base',
+    ]);
+    for (const p of presets) expect(p.path.startsWith(`user/${ACCOUNT}/${p.type}/`)).toBe(true);
   });
 
   it('fills paths and stems', async () => {

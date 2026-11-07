@@ -1,0 +1,9 @@
+{
+    "filament_settings_id": [
+        "Generic Fallback"
+    ],
+    "from": "User",
+    "inherits": "Generic PLA @Elegoo Nonexistent",
+    "name": "Generic Fallback",
+    "version": "2.3.2.0"
+}

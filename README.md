@@ -1,8 +1,9 @@
 # Preset Doctor
 
-**Finds and repairs custom Bambu Studio filament presets that disappeared after a Studio update.**
+**Finds and repairs custom presets (filament, process and printer) that disappeared after an
+update, for Bambu Studio and OrcaSlicer.**
 
-Free, open source, works offline. Windows. Not affiliated with Bambu Lab.
+Free, open source, works offline. Windows. Not affiliated with Bambu Lab or the OrcaSlicer project.
 
 | Before | After |
 |---|---|
@@ -21,18 +22,49 @@ longer exists, so Studio skips it when it loads your presets.
 
 **What Preset Doctor does:**
 
-1. It reads your Bambu Studio folder and lists every filament preset as **OK**, **Hidden** or
-   **Broken**, with a plain-English reason.
+1. It reads your Bambu Studio folder and lists every filament, process and printer preset as
+   **OK**, **Hidden** or **Broken**, with a plain-English reason. When you have more than one
+   kind, each kind gets its own tab.
 2. For each hidden preset, it finds the built-in preset it most likely meant and shows how sure it
    is (high, medium or low).
 3. It shows you the exact change. After you click **Fix**, it backs up your presets and changes
    only the one line that names the parent.
 
+Process presets get their printers from the preset they are based on, so for a process the new
+parent also decides which printers Studio offers it for; Preset Doctor lists them next to each
+suggestion. For printer presets it never picks for you: the nozzle and printer change everything,
+so you choose the printer you actually have.
+
+It also explains presets that Studio loads but greys out under "Unsupported presets" (or, for a
+process, leaves out of the list): it reads which printers and nozzles you've added in Studio and
+marks a preset **Unsupported** when it is only for printers or a nozzle size you haven't added,
+with what to do in Studio. It never changes those presets.
+
+## Which slicers
+
+| | Bambu Studio | OrcaSlicer |
+|---|---|---|
+| Folder | `%APPDATA%\BambuStudio` | `%APPDATA%\OrcaSlicer` |
+| Versions checked against the source | 02.09.01.70 | 2.3.2 and 2.5.0 |
+| Repairs | Yes | Yes |
+| Packed built-in presets (`.opc`, OrcaSlicer 2.5) | n/a | Checks that parents exist; suggests no replacements |
+
+Preset Doctor tells the two apart by their files (`BambuStudio.conf` or `OrcaSlicer.conf`, and the
+built-in preset folders), so a folder you pick is always handled as the slicer it belongs to. When
+both are installed, the Windows app shows a **Bambu Studio | OrcaSlicer** switch at the top.
+
+OrcaSlicer differs from Bambu Studio in ways Preset Doctor follows: it finds a parent that was
+renamed (when the new preset lists the old name), falls back to a generic parent for
+"Generic ..." filaments, and lets any vendor's preset build on its shared filament library. A
+preset OrcaSlicer still loads that way is reported as **OK, with notes**, not as hidden. Mac and
+Linux aren't supported yet.
+
 ## Download
 
 Get the `.exe` file from
 **[GitHub Releases](https://github.com/shmehltr/preset-doctor/releases)**. It is a portable app,
-so there is nothing to install: download it and double-click it.
+so there is nothing to install: download it and double-click it. The same exe works for Bambu
+Studio and OrcaSlicer.
 
 **"Windows protected your PC"**: Windows shows this for apps without a paid code-signing
 certificate, and Preset Doctor doesn't have one. Click **More info**, then **Run anyway**. If you
@@ -52,8 +84,8 @@ on your computer.
 
 | | Windows app | Web version |
 |---|---|---|
-| Steps | Scan, Fix. It repairs `%APPDATA%\BambuStudio` in place. | Copy folders out, Scan, Fix, copy the changed files back. |
-| Checks that Studio is closed | Yes, on its own. | No; you tick "I've closed Bambu Studio". |
+| Steps | Scan, Fix. It repairs `%APPDATA%\BambuStudio` (or `%APPDATA%\OrcaSlicer`) in place. | Copy folders out, Scan, Fix, copy the changed files back. |
+| Checks that the slicer is closed | Yes, on its own. | No; you tick "I've closed Bambu Studio" (or OrcaSlicer). |
 | Needs | Running an unsigned exe. | Chrome or Edge (Firefox and Safari can't open folders). |
 
 Browsers aren't allowed to open anything under `%APPDATA%`, so the web version works on a copy:
@@ -72,6 +104,13 @@ Browsers aren't allowed to open anything under `%APPDATA%`, so the web version w
    in the destination**. Don't copy the whole `user` folder back unless you made the copy just
    now and Studio stayed closed since, or it replaces presets you changed in Studio after the copy.
 
+**For OrcaSlicer** the steps are the same with its folder: close OrcaSlicer, paste
+`%APPDATA%\OrcaSlicer` into the address bar, and copy only the **`system`** and **`user`** folders
+and the **`OrcaSlicer.conf`** file. Don't copy anything else from that folder: it also holds your
+sign-in and your printers' access codes, which Preset Doctor doesn't need. The guide on the page
+has an **OrcaSlicer** button that shows these steps, and the page tells from the copy which slicer
+it is.
+
 ![The web version's step-by-step guide](docs/screenshots/web.png)
 
 ## How to use it
@@ -84,7 +123,9 @@ Browsers aren't allowed to open anything under `%APPDATA%`, so the web version w
    it.
    See [the FAQ](#faq) for the details and the one rare exception.
 3. **Open Preset Doctor, scan, review, fix.**
-   - Click **Scan**. It finds your Bambu Studio folder (`%APPDATA%\BambuStudio`) on its own.
+   - Click **Scan**. It finds your Bambu Studio folder (`%APPDATA%\BambuStudio`) on its own, or
+     your OrcaSlicer folder (`%APPDATA%\OrcaSlicer`) when Bambu Studio isn't installed. With
+     both, use the switch at the top.
    - Click a hidden preset to see why it's hidden, the suggested new parent and the exact change.
      If the suggestion looks wrong, pick another candidate or leave that preset alone.
    - Click **Fix selected**. Then open Bambu Studio and check that your presets are back. There
@@ -95,11 +136,13 @@ Browsers aren't allowed to open anything under `%APPDATA%`, so the web version w
 - **Backup first.** Before the first change, it zips your whole `user` folder to
   `%APPDATA%\PresetDoctor\backups\`. **Restore a backup…** at the bottom of the window lists your
   backups; pick one and confirm. Your current presets are backed up first, so a restore can be
-  undone too.
+  undone too. Each backup remembers which slicer's folder it came from, and is never restored into
+  the other slicer's folder.
 - **You see every change.** Each repair is shown as a diff before anything is written, and nothing
   is written until you click.
-- **Never writes while Studio is running.** It checks for `bambu-studio.exe` and refuses if Studio is
-  running, or if it can't tell whether it is.
+- **Never writes while the slicer is running.** It checks for `bambu-studio.exe` (or
+  `orca-slicer.exe` for an OrcaSlicer folder) and refuses if it is running, or if it can't tell
+  whether it is.
 - **Small, careful edits.** It changes one line per preset and keeps the file's formatting. It
   writes to a temporary file first and then swaps it in, so a crash can't leave a half-written
   preset. If a file changed after the scan, it stops and asks you to scan again.
@@ -119,6 +162,8 @@ npm ci
 npm run build -w @preset-doctor/core
 
 npm run cli -- scan                 # list presets and problems (reads only)
+npm run cli -- scan --type process  # only process presets
+npm run cli -- scan --slicer orca   # the OrcaSlicer folder
 npm run cli -- fix --dry-run        # show the repairs as diffs (reads only)
 npm run cli -- fix --apply --yes    # back up, then repair (close Studio first)
 npm run cli -- backups              # list backups
@@ -131,9 +176,11 @@ don't use `npx`. The commands it prints (`preset-doctor fix ...`) are run the sa
 
 | Option | Meaning |
 |---|---|
-| `[folder]` | Bambu Studio folder. Default `%APPDATA%\BambuStudio`. |
+| `[folder]` | Bambu Studio or OrcaSlicer folder; its files tell which. Default `%APPDATA%\BambuStudio`. |
+| `--slicer <bambu\|orca>` | Without a folder: use `%APPDATA%\BambuStudio` or `%APPDATA%\OrcaSlicer`. With a folder: stop (exit 2) if it belongs to the other slicer. |
 | `--user <id>` | Which account folder under `user\`. Default: the one with the most presets. |
-| `--json` | Machine-readable scan output. |
+| `--type <types>` | Only these preset types: `filament`, `process`, `printer` (or `machine`), comma-separated or repeated. Default: all. The `scan` exit code counts only these. |
+| `--json` | Machine-readable scan output (always every type; each row has a `type`). |
 | `--no-base-id` | Don't update `base_id` in the `.info` sync files. |
 | `--from-other-folder` | `backups restore` only: put back a backup that was made from a different folder. |
 | `--backups <dir>` | Where backups go. Default `%APPDATA%\PresetDoctor\backups`. |
@@ -161,12 +208,22 @@ reported but not changed. You can recreate it in Studio from a similar filament.
 No. Notes cover harmless things, like a missing `.info` sync file or a name that differs from the
 file name only in capital letters. Studio still shows those presets.
 
-**My preset is greyed out under "Unsupported presets". Can Preset Doctor fix it?**
-Not yet, and it isn't the problem Preset Doctor fixes: that preset still loads. Studio greys a
-preset out when it isn't made for the printer and nozzle you selected (or for your process
-preset), for example a preset based on a 0.4 nozzle preset while a 0.6 nozzle is selected.
-Pick a matching printer or nozzle, or base the preset on the right one in Studio. A preset whose
-parent is missing doesn't show anywhere, not even there; that's the one Preset Doctor repairs.
+**Why is my preset under "Unsupported presets"?**
+That preset still loads; Studio greys it out because it isn't made for the printer and nozzle you
+selected (or for your process preset). Preset Doctor reads which printers you've added in Studio
+and tells you which case it is:
+
+- **Unsupported** in the table: the preset is only for printers you haven't added, or for a
+  nozzle size you haven't added (for example a 0.8 mm preset when you added only 0.4 and 0.6).
+  Add that printer or nozzle in Studio's printer selection, or, if you no longer have it, ignore or
+  delete the preset in Studio.
+- **A note above the table** ("Some presets are for another printer you've added"): those presets
+  are fine. Studio shows them when you select that printer. Click **Show them** to list them.
+
+Preset Doctor doesn't change these presets: Studio keeps each preset's printer list itself, and
+editing it by hand would fight that. A process preset that doesn't fit isn't greyed out but left
+out of the process list. A preset whose parent is missing doesn't show anywhere, not even under
+"Unsupported presets"; that's the one Preset Doctor repairs.
 
 **Do I need to turn off cloud preset sync?**
 Probably not. This comes from reading Bambu Studio's source code (version 02.09.01.70); it hasn't
@@ -181,7 +238,23 @@ One rare case: if a repaired preset's cloud copy was deleted (say, from another 
 may delete the repaired file the next time you log in. Restore it from Preset Doctor's backup.
 
 **Does it work with OrcaSlicer, or on Mac?**
-Not yet. It supports Bambu Studio on Windows, and filament presets only.
+OrcaSlicer, yes (see [Which slicers](#which-slicers)); Mac and Linux, not yet. It supports Bambu
+Studio and OrcaSlicer on Windows: filament, process and printer presets.
+
+**OrcaSlicer 2.5 says its built-in presets are "packed". What changes?**
+OrcaSlicer 2.5 can ship a vendor's built-in presets as one packed `.opc` file instead of a folder
+of `.json` files. Preset Doctor can check that a parent's name is in that file, but can't read its
+settings. A preset whose parent is found there is OK; one whose parent isn't is reported as
+"Parent could not be checked", never as hidden, and no replacement is suggested for it.
+
+**What are the `user_backup-...` folders in the OrcaSlicer folder?**
+OrcaSlicer makes them itself when it updates. Preset Doctor neither reads, backs up nor changes
+them.
+
+**Why does a restore of an OrcaSlicer backup leave out some `.info` files?**
+For OrcaSlicer, a `.info` sync file whose preset (`.json`) is gone tells OrcaSlicer to delete that
+preset from your cloud. A restore therefore puts a `.info` file back only when its preset is in the
+backup or still on disk, and says how many it left out.
 
 **What does it change exactly?**
 It changes the `inherits` line in the preset's `.json` file. If the preset has a `.info` sync file
@@ -189,7 +262,8 @@ with a `base_id` line, it also changes `base_id` to match the new parent, the wa
 for a freshly created preset. (Studio itself leaves `base_id` as it was when a preset's parent
 changes, and only uses it for cloud sync, never to find the parent.) It never touches
 `updated_time` or `sync_info`. If a preset's internal name doesn't match its file name, it can
-also fix the name.
+also fix the name (and the matching `filament_settings_id`, `print_settings_id` or
+`printer_settings_id`).
 
 ## Development
 
@@ -248,10 +322,14 @@ generated from scratch, because the real one holds login tokens and printer seri
 real id is left in the output. Still, read the diff before committing, because custom preset
 names are copied as they are.
 
+The OrcaSlicer fixture (`__fixtures__/orca/`) comes from `node scripts/make-orca-fixture.ts`,
+which copies a small set of built-in presets from `%APPDATA%\OrcaSlicer` (read only) and makes up
+the user presets and `OrcaSlicer.conf`; see `__fixtures__/README-orca.md`.
+
 Bug reports: please use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md) and include
 the `scan --json` output (remove your account id first).
 
 ## License and disclaimer
 
-[MIT](LICENSE). Preset Doctor is not affiliated with, endorsed by, or sponsored by Bambu Lab.
-Bambu Studio is a trademark of its owner.
+[MIT](LICENSE). Preset Doctor is not affiliated with, endorsed by, or sponsored by Bambu Lab or
+the OrcaSlicer project. Bambu Studio and OrcaSlicer are trademarks of their owners.

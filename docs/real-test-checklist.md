@@ -118,6 +118,69 @@ Close Studio. In Preset Doctor, click **Restore a backup…** and pick the backu
 fix, or run `npm run cli -- backups restore <id> --yes`. If that doesn't work, copy the manual
 backup from step 0 back into `%APPDATA%\BambuStudio`, replacing the files there.
 
+## 5. "Unsupported" presets (R2/R3, optional, about 10 minutes)
+
+This checks the "Unsupported" helper (SPEC.md §5, R2 and R3; source findings in SPEC.md §10,
+finding 5). It needs no repair and writes nothing. Close Studio, scan with Preset Doctor, and note
+which presets it marks **Unsupported**, and which ones the note "Some presets are for another
+printer you've added" lists (click **Show them**). The steps that add or remove a printer or
+nozzle change Studio's own settings: undo them in Studio afterwards.
+
+1. **R2, process.** Open Studio and select the X2D. Look for the process preset Preset Doctor
+   marks Unsupported (it is made for the H2D) in the process list of the left sidebar, and in the
+   Process settings tab.
+   - **Predicted:** it is in neither list: Studio has no "Unsupported" group for processes.
+     Note whether the sidebar and the Process tab behave the same way (this is the
+     medium-confidence part).
+2. **R2, filament.** Open the filament dropdown and look for a filament Preset Doctor marks
+   Unsupported.
+   - **Predicted:** it is greyed out under "Unsupported presets", on every printer you've added.
+   - Then add the printer it is made for in Studio. Note the exact menu wording you used (Preset
+     Doctor says "printer selection"). **Predicted:** the preset shows normally once that printer
+     is selected. Remove the printer again afterwards.
+3. **R3, nozzle.** Only if you have a preset made for one nozzle size: remove that nozzle size for
+   its printer in Studio, close Studio and scan again.
+   - **Predicted:** Preset Doctor marks it Unsupported ("Made for the … mm nozzle, which you
+     haven't added"), and in Studio it drops out of the list (process) or goes under
+     "Unsupported presets" (filament). Add the nozzle back afterwards.
+4. **The note.** Pick one preset that **Show them** lists, and select the printer it is made for
+   in Studio.
+   - **Predicted:** it shows normally there, and greyed out (filament) or not at all (process)
+     on the X2D.
+
+## 6. OrcaSlicer (optional, about 15 minutes)
+
+This checks the OrcaSlicer support (SPEC.md §11). Your OrcaSlicer has no presets of its own yet,
+so first make a few: open OrcaSlicer, create two or three filament presets from built-in ones and
+save them, then close OrcaSlicer. **Make a copy of `%APPDATA%\OrcaSlicer\user` first** (as in step
+0), and put it back at the end.
+
+1. **Scan.** Open Preset Doctor. With both slicers installed the header shows a **Bambu Studio |
+   OrcaSlicer** switch; click **OrcaSlicer**.
+   - **Predicted:** the folder is `%APPDATA%\OrcaSlicer`, the pill says "OrcaSlicer is closed",
+     and your new presets are **OK**. Open OrcaSlicer: the pill turns to "OrcaSlicer is open" and
+     **Fix** is blocked. Close it again.
+2. **Hidden in OrcaSlicer.** Close OrcaSlicer. In one of the new presets' `.json` files, change
+   `inherits` to a made-up name that doesn't contain "Generic" (for example `Nonexistent PLA
+   @System`). Scan.
+   - **Predicted:** Preset Doctor marks it **Hidden in OrcaSlicer**. Open OrcaSlicer: the preset
+     is in no filament list, not even under "Unsupported presets". Close OrcaSlicer, use **Restore
+     a backup…** (or put the line back by hand) and check it shows again.
+3. **The "Generic" fallback.** As in 2, but with a name that contains "Generic", for example
+   `Generic PLA @Made Up`. Scan.
+   - **Predicted:** Preset Doctor marks it **OK, with notes** ("OrcaSlicer substitutes a generic
+     parent"), and OrcaSlicer still shows it, now based on `Generic PLA @System`.
+4. **"Unsupported presets" on 2.3.2.** Repeat step 5.2 above in OrcaSlicer, with a filament made
+   for a printer you haven't added.
+   - **Predicted:** the group "Unsupported presets" is always shown on 2.3.2, with the preset
+     greyed out in it.
+5. **OrcaSlicer 2.4 or later** (only if you have upgraded). Repeat 4.
+   - **Predicted:** there is no "Unsupported presets" group until Preferences > Developer >
+     "Show unsupported presets" is on.
+6. **OrcaSlicer 2.5 packed presets** (only after upgrading to 2.5). Scan.
+   - **Predicted:** if `system` holds `.opc` files, Preset Doctor shows the warning about packed
+     presets, and a preset whose parent it can't find there is "Parent could not be checked",
+     never **Hidden**.
 ## What to send back
 
 Copy this, fill in each line with **matched** or **didn't match**, and add what you saw where it
@@ -144,6 +207,18 @@ Sync at start:   on / off     Logged in: yes / no
 3.3 no .json changed, no .info appeared:
 3.4 (optional) after Save: .info with setting_id PFUS..., base_id = parent's id, empty sync_info:
 3.4 (optional) preset appeared on the second computer:
+5.1 Unsupported process absent from the sidebar list / the Process tab:
+5.2 Unsupported filament greyed under Unsupported; normal after adding its printer:
+5.2 menu wording for adding a printer:
+5.3 (optional) nozzle removed: Unsupported in Preset Doctor and in Studio:
+5.4 a preset from "Show them" shows normally on its printer:
+6.0 OrcaSlicer version:                 (Help > About)
+6.1 switch shown; pill follows OrcaSlicer open/closed; new presets OK:
+6.2 made-up parent: Hidden in Preset Doctor, absent in OrcaSlicer:
+6.3 Generic fallback: OK with notes, still shown in OrcaSlicer:
+6.4 Unsupported group shown on 2.3.2:
+6.5 (2.4+) group hidden until the developer setting is on:
+6.6 (2.5) packed presets: warning, "could not be checked", nothing Hidden:
 ```
 
 Screenshots of the filament dropdown for 1.2, 1.4, 2.4 and 2.6 are the most useful.

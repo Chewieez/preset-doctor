@@ -1,0 +1,69 @@
+{
+    "name": "Elegoo",
+    "version": "02.03.02.50",
+    "force_update": "0",
+    "description": "Elegoo configurations",
+    "machine_model_list": [],
+    "process_list": [
+        {
+            "name": "fdm_process_ecc_common",
+            "sub_path": "process/ECC/fdm_process_ecc_common.json"
+        },
+        {
+            "name": "fdm_process_ecc",
+            "sub_path": "process/ECC/fdm_process_ecc.json"
+        },
+        {
+            "name": "fdm_process_ecc_04020",
+            "sub_path": "process/ECC/fdm_process_ecc_04020.json"
+        },
+        {
+            "name": "fdm_process_ecc_06030",
+            "sub_path": "process/ECC/fdm_process_ecc_06030.json"
+        },
+        {
+            "name": "0.20mm Standard @Elegoo CC 0.4 nozzle",
+            "sub_path": "process/ECC/0.20mm Standard @Elegoo CC 0.4 nozzle.json"
+        },
+        {
+            "name": "0.30mm Standard @Elegoo CC 0.6 nozzle",
+            "sub_path": "process/ECC/0.30mm Standard @Elegoo CC 0.6 nozzle.json"
+        }
+    ],
+    "filament_list": [
+        {
+            "name": "fdm_elegoo_filament_common",
+            "sub_path": "filament/ELEGOO/fdm_elegoo_filament_common.json"
+        },
+        {
+            "name": "fdm_elegoo_filament_pla",
+            "sub_path": "filament/ELEGOO/fdm_elegoo_filament_pla.json"
+        },
+        {
+            "name": "Elegoo PLA @base",
+            "sub_path": "filament/BASE/Elegoo PLA @base.json"
+        },
+        {
+            "name": "Elegoo PLA @ECC",
+            "sub_path": "filament/ECC/Elegoo PLA @ECC.json"
+        }
+    ],
+    "machine_list": [
+        {
+            "name": "fdm_machine_ecc_common",
+            "sub_path": "machine/ECC/fdm_machine_ecc_common.json"
+        },
+        {
+            "name": "fdm_machine_ecc",
+            "sub_path": "machine/ECC/fdm_machine_ecc.json"
+        },
+        {
+            "name": "Elegoo Centauri Carbon 0.4 nozzle",
+            "sub_path": "machine/ECC/Elegoo Centauri Carbon 0.4 nozzle.json"
+        },
+        {
+            "name": "Elegoo Centauri Carbon 0.6 nozzle",
+            "sub_path": "machine/ECC/Elegoo Centauri Carbon 0.6 nozzle.json"
+        }
+    ]
+}

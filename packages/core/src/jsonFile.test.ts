@@ -36,7 +36,7 @@ describe('jsonFile round-trip over every fixture', () => {
       expect(serializeJsonFile(value, format)).toBe(text);
     } else {
       // Hand-edited system templates only; we never rewrite these wholesale.
-      expect(rel).toMatch(/\/system\/BBL\/filament\/fdm_filament_[^/]+\.json$/);
+      expect(rel).toMatch(/\/system\/BBL\/(filament|process|machine)\/fdm_\1_[^/]+\.json$/);
     }
     // The minimal-edit path is byte-identical for every file, canonical or not.
     const keys = topLevelKeys(text);

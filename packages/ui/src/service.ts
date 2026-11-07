@@ -9,6 +9,7 @@
 import {
   ApplyError,
   BackupCoverageError,
+  BackupSlicerError,
   BackupSourceError,
   errorMessage,
   FixError,
@@ -146,6 +147,7 @@ export function applyFailure(err: unknown, backupId: string): Refusal | undefine
 /** The refusal for an error from a restore; undefined for others. */
 export function restoreFailure(err: unknown): Refusal | undefined {
   if (err instanceof BackupSourceError) return new Refusal('other-source', err.message);
+  if (err instanceof BackupSlicerError) return new Refusal('other-slicer', err.message);
   if (err instanceof RestoreError) {
     // Say which backup undoes the part that was done.
     return new Refusal(

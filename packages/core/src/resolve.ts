@@ -21,6 +21,10 @@ export interface SystemPresetLike {
   name: string;
   /** Parent name; '' or undefined at the top of the chain. */
   inherits?: string | undefined;
+  /** It exists, but its settings can't be read (an OrcaSlicer .opc or bundle preset). */
+  opaque?: true | undefined;
+  /** OrcaSlicer found it under another name (renamed_from, "Generic" fallback): that name. */
+  currentName?: string | undefined;
 }
 
 export interface SystemLookup {

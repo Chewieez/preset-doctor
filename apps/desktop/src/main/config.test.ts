@@ -3,6 +3,7 @@ import { readConfig } from './config.js';
 
 const defaults = {
   studioRoot: 'C:\\Roaming\\BambuStudio',
+  orcaRoot: 'C:\\Roaming\\OrcaSlicer',
   backupsDir: 'C:\\Roaming\\PresetDoctor\\backups',
 };
 
@@ -10,6 +11,7 @@ describe('readConfig', () => {
   it('uses the detected folders by default', () => {
     expect(readConfig({}, defaults)).toEqual({
       root: defaults.studioRoot,
+      slicerRoots: { bambu: defaults.studioRoot, orca: defaults.orcaRoot },
       backupsDir: defaults.backupsDir,
       testMode: false,
       fakeStudioRunning: null,
@@ -22,6 +24,12 @@ describe('readConfig', () => {
       defaults,
     );
     expect(c).toMatchObject({ root: 'D:\\copy', backupsDir: 'D:\\b', testMode: true });
+    // A test run never offers a real slicer folder, only the ones it names.
+    expect(c.slicerRoots).toEqual({});
+    expect(
+      readConfig({ PRESET_DOCTOR_ROOT: 'D:\\copy', PRESET_DOCTOR_ORCA_ROOT: 'D:\\orca' }, defaults)
+        .slicerRoots,
+    ).toEqual({ orca: 'D:\\orca' });
   });
 
   it('honors the fake Studio flag only with a root override', () => {
@@ -40,8 +48,8 @@ describe('readConfig', () => {
     ).toBe(null);
   });
 
-  it('never fakes the Studio check when the override is the real Studio folder', () => {
-    for (const real of [defaults.studioRoot, 'c:\\roaming\\bambustudio\\']) {
+  it('never fakes the check when the override is a real slicer folder', () => {
+    for (const real of [defaults.studioRoot, 'c:\\roaming\\bambustudio\\', defaults.orcaRoot]) {
       const c = readConfig(
         { PRESET_DOCTOR_ROOT: real, PRESET_DOCTOR_FAKE_STUDIO_RUNNING: '0' },
         defaults,

@@ -135,6 +135,7 @@ describe('defaultPaths', () => {
       defaultPaths({ platform: 'win32', env: { APPDATA: 'C:\\Users\\me\\AppData\\Roaming' } }),
     ).toEqual({
       studioRoot: 'C:\\Users\\me\\AppData\\Roaming\\BambuStudio',
+      orcaRoot: 'C:\\Users\\me\\AppData\\Roaming\\OrcaSlicer',
       backupsDir: 'C:\\Users\\me\\AppData\\Roaming\\PresetDoctor\\backups',
     });
   });
@@ -148,6 +149,7 @@ describe('defaultPaths', () => {
   it('uses Application Support on macOS and ~/.config on Linux', () => {
     expect(defaultPaths({ platform: 'darwin', env: {}, home: '/Users/me' })).toEqual({
       studioRoot: '/Users/me/Library/Application Support/BambuStudio',
+      orcaRoot: '/Users/me/Library/Application Support/OrcaSlicer',
       backupsDir: '/Users/me/Library/Application Support/PresetDoctor/backups',
     });
     expect(defaultPaths({ platform: 'linux', env: {}, home: '/home/me' }).studioRoot).toBe(

@@ -10,16 +10,26 @@
  */
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import { registerHooks } from 'node:module';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import {
-  parseJsonFile,
-  serializeJsonFile,
-  setJsonArrayStringItem,
-  setJsonStringField,
-} from '../packages/core/src/jsonFile.ts';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Core's sources import each other as './x.js' (for tsc); point those at the .ts files so
+// Node's type stripping can run them directly (as scripts/r1-simulate.ts does).
+const coreSrc = pathToFileURL(path.join(repoRoot, 'packages', 'core', 'src') + path.sep).href;
+registerHooks({
+  resolve(specifier, context, next) {
+    if (context.parentURL?.startsWith(coreSrc) && /^\.\.?\/.*\.js$/.test(specifier)) {
+      const ts = new URL(specifier.replace(/\.js$/, '.ts'), context.parentURL);
+      if (fs.existsSync(fileURLToPath(ts))) return next(ts.href, context);
+    }
+    return next(specifier, context);
+  },
+});
+const { parseJsonFile, serializeJsonFile, setJsonArrayStringItem, setJsonStringField } =
+  await import('../packages/core/src/jsonFile.ts');
 const outRoot = path.join(repoRoot, 'packages', 'core', 'src', '__fixtures__');
 const liveRoot = path.resolve(
   process.argv[2] ?? path.join(process.env.APPDATA ?? '', 'BambuStudio'),
@@ -407,10 +417,13 @@ if (!bbl.format.canonical)
   console.warn('warning: live BBL.json is not canonical; it was reformatted');
 systemFiles.push({ rel: 'system/BBL.json', text: serializeJsonFile(trimmedIndex, bbl.format) });
 
-/** Studio's conf ends with "# MD5 checksum <md5 of the LF-normalized JSON>" (verified on 2.8). */
-function synthesizeConf(syncUserPreset: boolean): string {
+/**
+ * Studio's conf ends with "# MD5 checksum <md5 of the LF-normalized JSON>" (verified on 2.8).
+ * `extra` adds top-level sections; every value is written here, never copied from the live conf.
+ */
+function synthesizeConf(syncUserPreset: boolean, extra: Record<string, unknown> = {}): string {
   const json = serializeJsonFile(
-    { app: { sync_user_preset: syncUserPreset } },
+    { app: { sync_user_preset: syncUserPreset }, ...extra },
     {
       indent: '    ',
       eol: '\r\n',
@@ -425,6 +438,464 @@ function synthesizeConf(syncUserPreset: boolean): string {
     .toUpperCase();
   return `${json}# MD5 checksum ${md5}\r\n`;
 }
+
+// ---------- types-bambu: process and printer presets ----------
+
+// System presets are Bambu's public profile files, copied byte for byte with their whole
+// inherits and include chains. The user presets are synthesized: live process names are the
+// user's own, and there are no live printer presets.
+type IndexedType = 'process' | 'machine';
+const TYPE_LIST: Record<IndexedType, string> = { process: 'process_list', machine: 'machine_list' };
+const typeIndex = bblIndex as unknown as Record<string, IndexEntry[] | undefined>;
+const typeSubPath: Record<IndexedType, Map<string, string>> = {
+  process: new Map((typeIndex.process_list ?? []).map((e) => [e.name, e.sub_path])),
+  machine: new Map((typeIndex.machine_list ?? []).map((e) => [e.name, e.sub_path])),
+};
+const typeCache = new Map<string, { text: string; json: Record<string, unknown> }>();
+function typePreset(
+  type: IndexedType,
+  name: string,
+): { text: string; json: Record<string, unknown> } {
+  const sub = typeSubPath[type].get(name);
+  if (!sub) throw new Error(`No ${type} system preset named ${name}`);
+  const key = `${type}\u0000${name}`;
+  let hit = typeCache.get(key);
+  if (!hit) {
+    const text = readLive('system', 'BBL', ...sub.split('/'));
+    hit = { text, json: JSON.parse(text) as Record<string, unknown> };
+    typeCache.set(key, hit);
+  }
+  return hit;
+}
+
+const TYPE_SYSTEM: Record<IndexedType, string[]> = {
+  process: [
+    '0.20mm Standard @BBL X1C',
+    '0.20mm Standard @BBL X2D',
+    '0.20mm High Quality @BBL X2D',
+    '0.16mm Standard @BBL H2D',
+    '0.20mm Standard @BBL A1M',
+  ],
+  machine: [
+    'Bambu Lab X1 Carbon 0.4 nozzle',
+    'Bambu Lab X2D 0.4 nozzle',
+    'Bambu Lab X2D 0.6 nozzle',
+    'Bambu Lab A1 mini 0.4 nozzle',
+  ],
+};
+
+const typeSelected: Record<IndexedType, Set<string>> = { process: new Set(), machine: new Set() };
+for (const type of ['process', 'machine'] as const) {
+  const queue = [...TYPE_SYSTEM[type]];
+  while (queue.length) {
+    const name = queue.pop()!;
+    if (typeSelected[type].has(name)) continue;
+    typeSelected[type].add(name);
+    const json = typePreset(type, name).json;
+    const deps = [json.inherits, ...(Array.isArray(json.include) ? json.include : [])];
+    for (const d of deps) if (typeof d === 'string' && d !== '') queue.push(d);
+  }
+}
+
+const typesSystemFiles: OutFile[] = systemFiles.filter((f) => f.rel !== 'system/BBL.json');
+for (const type of ['process', 'machine'] as const) {
+  for (const e of typeIndex[TYPE_LIST[type]] ?? []) {
+    if (typeSelected[type].has(e.name)) {
+      typesSystemFiles.push({
+        rel: `system/BBL/${e.sub_path}`,
+        text: typePreset(type, e.name).text,
+      });
+    }
+  }
+}
+const typesIndex = {
+  ...trimmedIndex,
+  machine_list: (typeIndex.machine_list ?? []).filter((e) => typeSelected.machine.has(e.name)),
+  process_list: (typeIndex.process_list ?? []).filter((e) => typeSelected.process.has(e.name)),
+};
+typesSystemFiles.push({ rel: 'system/BBL.json', text: serializeJsonFile(typesIndex, bbl.format) });
+
+const SETTINGS_ID_KEY: Record<IndexedType | 'filament', string> = {
+  filament: 'filament_settings_id',
+  process: 'print_settings_id',
+  machine: 'printer_settings_id',
+};
+const SIDE_PREFIX: Record<IndexedType | 'filament', string> = {
+  filament: 'PFUS',
+  process: 'PPUS',
+  machine: 'PMUS',
+};
+// Keys every system file has that a user preset never copies as an override.
+const META_KEYS = new Set([
+  'type',
+  'name',
+  'inherits',
+  'from',
+  'setting_id',
+  'instantiation',
+  'description',
+  'include',
+  'compatible_printers',
+  'compatible_printers_condition',
+  'printer_model',
+  'printer_variant',
+  'default_filament_profile',
+  'default_print_profile',
+  'upward_compatible_machine',
+  'filament_id',
+  'filament_settings_id',
+  'print_settings_id',
+  'printer_settings_id',
+  'version',
+]);
+
+interface TypedUser {
+  type: IndexedType | 'filament';
+  /** Path under user/1000000001/<type>/, without .json. */
+  file: string;
+  /** "name" and settings id; default: the file name. */
+  name?: string;
+  /** Omitted: the key is written as "" (a root preset). */
+  inherits?: string;
+  /** System preset whose own settings provide the 2-3 override keys. */
+  keysFrom: string;
+  /** base_id in the sidecar: a system preset's name (its setting_id is used), or '' for empty. */
+  baseIdOf?: string;
+  extra?: Record<string, unknown>;
+  crlf?: boolean;
+  expect: string;
+}
+
+const TYPES_USER: TypedUser[] = [
+  {
+    type: 'filament',
+    file: 'My PLA',
+    inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL X2D 0.4 nozzle',
+    baseIdOf: 'Generic PLA @BBL X2D 0.4 nozzle',
+    expect: 'ok (a filament row, so mixed-type output is covered)',
+  },
+  {
+    type: 'process',
+    file: '0.20mm Standard @BBL X1C - Copy',
+    inherits: '0.20mm Standard @BBL X1C',
+    keysFrom: '0.20mm Standard @BBL X1C',
+    baseIdOf: '0.20mm Standard @BBL X1C',
+    crlf: true,
+    expect: 'ok',
+  },
+  {
+    type: 'process',
+    file: 'Case Only',
+    inherits: '0.20mm standard @BBL X1C',
+    keysFrom: '0.20mm Standard @BBL X1C',
+    baseIdOf: '0.20mm Standard @BBL X1C',
+    expect: 'R1 high, pre-selected `0.20mm Standard @BBL X1C`',
+  },
+  {
+    type: 'process',
+    file: 'Added Suffix',
+    inherits: '0.20mm Standard @BBL X2D 0.4 nozzle',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '0.20mm Standard @BBL X2D',
+    expect: 'R1 high (covers X2D 0.4), pre-selected `0.20mm Standard @BBL X2D`',
+  },
+  {
+    type: 'process',
+    file: 'Old Profile Word',
+    inherits: '0.20mm Optimal @BBL X2D',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '',
+    expect:
+      'R1 medium `0.20mm Standard @BBL X2D` and `0.20mm High Quality @BBL X2D`; nothing pre-selected',
+  },
+  {
+    type: 'process',
+    file: 'Old Code',
+    inherits: '0.20mm Standard @BBL N1',
+    keysFrom: '0.20mm Standard @BBL A1M',
+    baseIdOf: '0.20mm Standard @BBL A1M',
+    expect: 'R1 medium (raised by base_id) `0.20mm Standard @BBL A1M`; nothing pre-selected',
+  },
+  {
+    type: 'process',
+    file: 'No Candidates',
+    inherits: '0.33mm Weird @BBL ZZZ',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '',
+    expect: 'R1, no candidates',
+  },
+  {
+    type: 'process',
+    file: 'Name Mismatch',
+    name: 'Name Mismatch Old',
+    inherits: '0.20mm Standard @BBL X2D',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '0.20mm Standard @BBL X2D',
+    expect: 'R4 rename to `Name Mismatch`, which also rewrites `print_settings_id`',
+  },
+  {
+    type: 'process',
+    file: 'Template Parent',
+    inherits: 'fdm_process_common',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '',
+    expect: 'R1 (the parent is a template, not instantiable), no high candidate',
+  },
+  {
+    type: 'machine',
+    file: 'Bambu Lab X1 Carbon 0.4 nozzle - Copy',
+    inherits: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    keysFrom: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    baseIdOf: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    expect: 'ok',
+  },
+  {
+    type: 'machine',
+    file: 'Case Only Printer',
+    inherits: 'Bambu Lab X1 carbon 0.4 nozzle',
+    keysFrom: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    baseIdOf: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    expect: 'R1 high `Bambu Lab X1 Carbon 0.4 nozzle`, **not** pre-selected',
+  },
+  {
+    type: 'machine',
+    file: 'Old Model Name',
+    inherits: 'Bambu Lab N1 0.4 nozzle',
+    keysFrom: 'Bambu Lab A1 mini 0.4 nozzle',
+    baseIdOf: 'Bambu Lab A1 mini 0.4 nozzle',
+    expect: 'R1 medium `Bambu Lab A1 mini 0.4 nozzle` (from base_id), not pre-selected',
+  },
+  {
+    type: 'machine',
+    file: 'base/My Printer 0.4 nozzle',
+    keysFrom: 'Bambu Lab X1 Carbon 0.4 nozzle',
+    extra: { printer_model: 'My Printer', printer_variant: '0.4' },
+    expect: 'ok, `Custom printer, not based on another preset`',
+  },
+];
+
+function systemJson(type: IndexedType | 'filament', name: string): Record<string, unknown> {
+  return type === 'filament' ? systemPreset(name)!.json : typePreset(type, name).json;
+}
+
+function settingIdOf(type: IndexedType | 'filament', name: string): string {
+  const id = systemJson(type, name).setting_id;
+  if (typeof id !== 'string') throw new Error(`${name} has no setting_id`);
+  return id;
+}
+
+function buildTypedUser(u: TypedUser): OutFile[] {
+  const name = u.name ?? u.file.split('/').pop()!;
+  const source = systemJson(u.type, u.keysFrom);
+  const overrides = Object.keys(source)
+    .filter((k) => !META_KEYS.has(k))
+    .slice(0, 3);
+  const json: Record<string, unknown> = {
+    from: 'User',
+    inherits: u.inherits ?? '',
+    name,
+    [SETTINGS_ID_KEY[u.type]]: u.type === 'filament' ? [name] : name,
+    version: '2.8.0.6',
+    ...u.extra,
+  };
+  for (const k of overrides) json[k] = source[k];
+  const sorted = Object.fromEntries(
+    Object.keys(json)
+      .sort()
+      .map((k) => [k, json[k]]),
+  );
+  const text = serializeJsonFile(sorted, {
+    indent: '    ',
+    eol: u.crlf ? '\r\n' : '\n',
+    trailingNewline: u.crlf === true,
+    bom: false,
+    canonical: true,
+  });
+  const rel = `user/1000000001/${u.type}/${u.file}`;
+  const baseId = u.baseIdOf ? settingIdOf(u.type, u.baseIdOf) : '';
+  const settingId = SIDE_PREFIX[u.type] + fakeHex(`preset-doctor-types-${u.type}-${u.file}`, 14);
+  const info =
+    `sync_info = \r\nuser_id = 1000000001\r\nsetting_id = ${settingId}\r\n` +
+    `base_id = ${baseId}\r\nupdated_time = 1782278409\r\n`;
+  return [
+    { rel: `${rel}.json`, text },
+    { rel: `${rel}.info`, text: info },
+  ];
+}
+
+if (!selected.has('Generic PLA @BBL X2D 0.4 nozzle')) {
+  throw new Error('The shared filament subset lost Generic PLA @BBL X2D 0.4 nozzle');
+}
+const typesUserFiles = TYPES_USER.flatMap(buildTypedUser);
+
+// ---------- unsupported-bambu: R2/R3 (printers that aren't added) ----------
+
+// The system subset is copied like types-bambu's: the listed presets plus their whole inherits
+// and include chains. The conf is synthesized with only the keys R2/R3 read.
+const UNSUPPORTED_SYSTEM: Record<IndexedType, string[]> = {
+  process: [
+    '0.20mm Standard @BBL X2D',
+    '0.20mm Standard @BBL X1C',
+    '0.16mm Standard @BBL H2D',
+    '0.40mm Standard @BBL X2D 0.8 nozzle',
+  ],
+  machine: [
+    'Bambu Lab X2D 0.4 nozzle',
+    'Bambu Lab X2D 0.6 nozzle',
+    'Bambu Lab X2D 0.8 nozzle',
+    'Bambu Lab P1S 0.4 nozzle',
+    'Bambu Lab X1 Carbon 0.4 nozzle',
+    'Bambu Lab H2D 0.4 nozzle',
+  ],
+};
+for (const name of [
+  'Generic PLA @BBL X2D 0.4 nozzle',
+  'Generic PLA @BBL H2D',
+  'Generic PLA @base',
+]) {
+  if (!selected.has(name)) throw new Error(`The shared filament subset lost ${name}`);
+}
+
+const unsupportedSelected: Record<IndexedType, Set<string>> = {
+  process: new Set(),
+  machine: new Set(),
+};
+for (const type of ['process', 'machine'] as const) {
+  const queue = [...UNSUPPORTED_SYSTEM[type]];
+  while (queue.length) {
+    const name = queue.pop()!;
+    if (unsupportedSelected[type].has(name)) continue;
+    unsupportedSelected[type].add(name);
+    const json = typePreset(type, name).json;
+    const deps = [json.inherits, ...(Array.isArray(json.include) ? json.include : [])];
+    for (const d of deps) if (typeof d === 'string' && d !== '') queue.push(d);
+  }
+}
+const unsupportedSystemFiles: OutFile[] = systemFiles.filter((f) => f.rel !== 'system/BBL.json');
+for (const type of ['process', 'machine'] as const) {
+  for (const e of typeIndex[TYPE_LIST[type]] ?? []) {
+    if (unsupportedSelected[type].has(e.name)) {
+      unsupportedSystemFiles.push({
+        rel: `system/BBL/${e.sub_path}`,
+        text: typePreset(type, e.name).text,
+      });
+    }
+  }
+}
+const unsupportedIndex = {
+  ...trimmedIndex,
+  machine_list: (typeIndex.machine_list ?? []).filter((e) =>
+    unsupportedSelected.machine.has(e.name),
+  ),
+  process_list: (typeIndex.process_list ?? []).filter((e) =>
+    unsupportedSelected.process.has(e.name),
+  ),
+};
+unsupportedSystemFiles.push({
+  rel: 'system/BBL.json',
+  text: serializeJsonFile(unsupportedIndex, bbl.format),
+});
+
+const UNSUPPORTED_CONF = {
+  models: [
+    { vendor: 'BBL', model: 'Bambu Lab X2D', nozzle_diameter: '0.4;0.6' },
+    { vendor: 'BBL', model: 'Bambu Lab P1S', nozzle_diameter: '0.4' },
+  ],
+  presets: {
+    machine: 'Bambu Lab X2D 0.4 nozzle',
+    process: '0.20mm Standard @BBL X2D',
+    filaments: ['Generic PLA @BBL X2D 0.4 nozzle'],
+  },
+};
+
+const UNSUPPORTED_USER: TypedUser[] = [
+  {
+    type: 'process',
+    file: 'On X2D',
+    inherits: '0.20mm Standard @BBL X2D',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    baseIdOf: '0.20mm Standard @BBL X2D',
+    expect: '`selected`, no finding',
+  },
+  {
+    type: 'process',
+    file: 'On P1S',
+    inherits: '0.20mm Standard @BBL X1C',
+    keysFrom: '0.20mm Standard @BBL X1C',
+    baseIdOf: '0.20mm Standard @BBL X1C',
+    expect: '`other-printer` (P1S 0.4), counted in the R3 note',
+  },
+  {
+    type: 'process',
+    file: 'On H2D',
+    inherits: '0.16mm Standard @BBL H2D',
+    keysFrom: '0.16mm Standard @BBL H2D',
+    baseIdOf: '0.16mm Standard @BBL H2D',
+    expect: 'R2 `printer-not-added` (H2D 0.4)',
+  },
+  {
+    type: 'process',
+    file: 'On X2D 08',
+    inherits: '0.40mm Standard @BBL X2D 0.8 nozzle',
+    keysFrom: '0.40mm Standard @BBL X2D 0.8 nozzle',
+    baseIdOf: '0.40mm Standard @BBL X2D 0.8 nozzle',
+    expect: 'R3 `nozzle-not-added` (X2D 0.8; 0.4 and 0.6 added)',
+  },
+  {
+    type: 'process',
+    file: 'base/For My X2D',
+    keysFrom: '0.20mm Standard @BBL X2D',
+    extra: { compatible_printers: ['My X2D'] },
+    expect: '`other-printer` (the user printer My X2D), counted in the note',
+  },
+  {
+    type: 'filament',
+    file: 'Unknown Printer',
+    inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL X2D 0.4 nozzle',
+    baseIdOf: 'Generic PLA @BBL X2D 0.4 nozzle',
+    extra: { compatible_printers: ['Bambu Lab Q9 0.4 nozzle'] },
+    expect: 'R2 `unknown-printers`, `guessed`',
+  },
+  {
+    type: 'filament',
+    file: 'Condition Only',
+    inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL X2D 0.4 nozzle',
+    baseIdOf: 'Generic PLA @BBL X2D 0.4 nozzle',
+    extra: {
+      compatible_printers: [],
+      compatible_printers_condition: 'nozzle_diameter[0]==0.4',
+    },
+    expect: '`cant-tell` (condition), no finding',
+  },
+  {
+    type: 'filament',
+    file: 'Other Process',
+    inherits: 'Generic PLA @BBL X2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL X2D 0.4 nozzle',
+    baseIdOf: 'Generic PLA @BBL X2D 0.4 nozzle',
+    extra: { compatible_prints: ['0.12mm Fine @BBL X2D'] },
+    expect: "`selected` with `process: 'mismatch'`, counted in the note",
+  },
+  {
+    type: 'filament',
+    file: 'base/My PLA @Bambu Lab H2D 0.4 nozzle',
+    keysFrom: 'Generic PLA @BBL H2D',
+    extra: { compatible_printers: [] },
+    expect: 'the name rule gives `Bambu Lab H2D 0.4 nozzle`, so R2 `printer-not-added`',
+  },
+  {
+    type: 'machine',
+    file: 'My X2D',
+    inherits: 'Bambu Lab X2D 0.4 nozzle',
+    keysFrom: 'Bambu Lab X2D 0.4 nozzle',
+    baseIdOf: 'Bambu Lab X2D 0.4 nozzle',
+    expect: 'ok; printers are never judged, and this one counts as added',
+  },
+];
+const unsupportedUserFiles = UNSUPPORTED_USER.flatMap(buildTypedUser);
 
 // ---------- write ----------
 
@@ -443,8 +914,59 @@ for (const [fixture, spec] of Object.entries(fixtures)) {
     fs.writeFileSync(abs, f.text, 'utf8');
   }
 }
+{
+  const dir = path.join(outRoot, 'types-bambu');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const files: OutFile[] = [
+    ...typesSystemFiles,
+    ...typesUserFiles,
+    { rel: 'BambuStudio.conf', text: synthesizeConf(false) },
+  ];
+  for (const f of files) {
+    const abs = path.join(dir, ...f.rel.split('/'));
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, f.text, 'utf8');
+  }
+}
+{
+  const dir = path.join(outRoot, 'unsupported-bambu');
+  fs.rmSync(dir, { recursive: true, force: true });
+  const files: OutFile[] = [
+    ...unsupportedSystemFiles,
+    ...unsupportedUserFiles,
+    { rel: 'BambuStudio.conf', text: synthesizeConf(false, UNSUPPORTED_CONF) },
+  ];
+  for (const f of files) {
+    const abs = path.join(dir, ...f.rel.split('/'));
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, f.text, 'utf8');
+  }
+}
 
 // ---------- leak check ----------
+
+// Every setting_id in a live user sidecar, of every type and account: none may reach the output.
+// Read at run time only; never written anywhere.
+const liveSettingIds = new Set<string>(settingIdMap.keys());
+for (const a of fs.readdirSync(path.join(liveRoot, 'user'), { withFileTypes: true })) {
+  if (!a.isDirectory()) continue;
+  for (const sub of [
+    'filament',
+    'filament/base',
+    'process',
+    'process/base',
+    'machine',
+    'machine/base',
+  ]) {
+    const dir = path.join(liveRoot, 'user', a.name, ...sub.split('/'));
+    if (!fs.existsSync(dir)) continue;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.info')) continue;
+      const id = /^setting_id = (\S+)/m.exec(fs.readFileSync(path.join(dir, f), 'utf8'))?.[1];
+      if (id) liveSettingIds.add(id);
+    }
+  }
+}
 
 const leaks: string[] = [];
 const walk = (d: string): void => {
@@ -454,7 +976,7 @@ const walk = (d: string): void => {
     else {
       const t = e.name + '\n' + fs.readFileSync(p, 'utf8');
       for (const real of accountMap.keys()) if (t.includes(real)) leaks.push(`${p}: account id`);
-      for (const real of settingIdMap.keys()) if (t.includes(real)) leaks.push(`${p}: setting id`);
+      for (const real of liveSettingIds) if (t.includes(real)) leaks.push(`${p}: setting id`);
     }
   }
 };
@@ -552,6 +1074,51 @@ const synthNotes = (fixtures['broken-r1']!.users.main ?? [])
   .map((e) => `- \`${e.name}.json\` inherits \`${e.inherits}\`: ${e.note}.`)
   .join('\n');
 
+function unsupportedTable(): string {
+  const rows = ['| Preset file | Setup | Expected |', '|---|---|---|'];
+  for (const u of UNSUPPORTED_USER) {
+    const setup = [
+      u.inherits ? `inherits \`${u.inherits}\`` : 'no `inherits`',
+      ...Object.entries(u.extra ?? {}).map(([k, v]) => `own \`${k}: ${JSON.stringify(v)}\``),
+    ].join(', ');
+    rows.push(`| ${u.type}/${u.file}.json | ${setup} | ${u.expect} |`);
+  }
+  return rows.join('\n');
+}
+
+function typesTable(): string {
+  const userNames = new Set(
+    TYPES_USER.map((u) => `${u.type}\u0000${u.name ?? u.file.split('/').pop()!}`),
+  );
+  const rows = ['| Preset file | `inherits` | Parent exists | Expected |', '|---|---|---|---|'];
+  for (const u of TYPES_USER) {
+    const inh = u.inherits ?? '';
+    const exists =
+      inh === ''
+        ? '(root preset)'
+        : u.type === 'filament'
+          ? selected.has(inh)
+            ? 'yes'
+            : 'no'
+          : typeSelected[u.type].has(inh)
+            ? typePreset(u.type, inh).json.instantiation === 'false'
+              ? 'template only'
+              : 'yes'
+            : userNames.has(`${u.type}\u0000${inh}`)
+              ? 'yes (user)'
+              : 'no';
+    const notes = [
+      u.baseIdOf ? `base_id = setting_id of \`${u.baseIdOf}\`` : '',
+      u.name ? `\`name\` = \`${u.name}\`` : '',
+      u.crlf ? 'CRLF' : '',
+    ].filter((s) => s !== '');
+    rows.push(
+      `| ${u.type}/${u.file}.json${notes.length ? ` (${notes.join('; ')})` : ''} | ${inh ? `\`${inh}\`` : '""'} | ${exists} | ${u.expect} |`,
+    );
+  }
+  return rows.join('\n');
+}
+
 const readme = `# Test fixtures
 
 Generated by \`npm run fixtures\` (scripts/make-fixtures.ts) from a live Bambu Studio folder
@@ -559,16 +1126,22 @@ Generated by \`npm run fixtures\` (scripts/make-fixtures.ts) from a live Bambu S
 
 Each folder is a complete, minimal \`%APPDATA%\\BambuStudio\` root:
 \`BambuStudio.conf\`, \`system/BBL.json\`, \`system/BBL/filament/**\`, \`user/<id>/filament/**\`.
+\`types-bambu/\` also has \`system/BBL/process/**\`, \`system/BBL/machine/**\` and
+\`user/1000000001/{process,machine}/**\`.
+\`orca/\` is an OrcaSlicer root, made by \`scripts/make-orca-fixture.ts\`; see \`README-orca.md\`.
 
 ## Privacy
 
 - Account ids are replaced: the main account becomes \`1000000001\`, the second \`1000000002\`
   (folder names and \`user_id\` in sidecars).
 - User \`setting_id\` values (\`PFUS...\`) are replaced with fake deterministic ids of the same length.
+- The process and printer user presets in \`types-bambu/\` are synthesized, never copied (live
+  process names are the user's own); their sidecars use fake \`PPUS...\`/\`PMUS...\` ids.
 - \`BambuStudio.conf\` is synthesized, never copied: it holds only \`app.sync_user_preset\` plus the
   \`# MD5 checksum\` trailer Studio writes (MD5 of the LF-normalized JSON without the final newline).
   Readers must strip that trailer before \`JSON.parse\`.
-- The generator fails if any real account id or real setting id appears in the output.
+- The generator fails if any real account id, or any real setting id from a live sidecar of any
+  preset type and account, appears in the output.
 
 ## Byte fidelity
 
@@ -586,7 +1159,8 @@ every stem used by a fixture parent (${[...stems].sort().join(', ')}) on printer
 ${[...printers].sort().join(', ')}, plus their full \`inherits\` and \`include\` chains
 (\`@base\` presets, \`fdm_filament_*\` templates). \`BBL.json\` is trimmed to match:
 \`filament_list\` keeps only included entries (original order), and \`machine_model_list\`,
-\`machine_list\` and \`process_list\` are empty. Every \`filament_list\` entry has its file.
+\`machine_list\` and \`process_list\` are empty (except in \`types-bambu/\`, below). Every
+\`filament_list\` entry has its file.
 
 Note: in this profile version the X2D preset without a nozzle suffix (e.g. \`Generic PETG @BBL X2D\`)
 is the 0.6/0.8 nozzle variant, while X1C's unsuffixed preset usually covers 0.4. Resolve
@@ -649,12 +1223,56 @@ Also expected: R4 "missing sidecar" (severity info) for the 18 \`06\` presets.
 
 Expected: account list 1000000001 (6 presets), 1000000002 (3), default (0); default pick is the
 account with the most presets. (Counts include \`base/\` presets.)
+
+## types-bambu/
+
+Process and printer presets. \`BambuStudio.conf\`: \`sync_user_preset: false\`. The system
+filament subset is the shared one. On top of it come ${typesIndex.process_list.length} of ${(typeIndex.process_list ?? []).length} system process files and
+${typesIndex.machine_list.length} of ${(typeIndex.machine_list ?? []).length} system printer files: these presets
+
+${[...TYPE_SYSTEM.process, ...TYPE_SYSTEM.machine].map((n) => `- \`${n}\``).join('\n')}
+
+plus their full \`inherits\` and \`include\` chains (\`fdm_process_*\` and \`fdm_machine_*\`
+templates), copied byte for byte. \`process_list\` and \`machine_list\` keep only included entries
+(original order).
+
+The user presets are synthesized: \`from\`, \`inherits\`, \`name\`, the settings id
+(\`print_settings_id\` / \`printer_settings_id\`, a plain string), \`version\`, and the first three
+settings of a system preset as overrides; sorted keys, 4-space indent, LF without a final newline
+(the X1C copy is CRLF with one). Every preset has a sidecar.
+
+${typesTable()}
+
+Expected: 8 hidden (6 process, 2 printer), 1 OK with notes, 4 OK; no warnings. Printer
+candidates are never pre-selected.
+
+## unsupported-bambu/
+
+The "Unsupported" helper (R2/R3, report-only). The system filament subset is the shared one; on
+top of it come ${unsupportedIndex.process_list.length} system process files and ${unsupportedIndex.machine_list.length} system printer files: these presets
+
+${[...UNSUPPORTED_SYSTEM.process, ...UNSUPPORTED_SYSTEM.machine].map((n) => `- \`${n}\``).join('\n')}
+
+plus their full \`inherits\` and \`include\` chains, copied byte for byte.
+
+\`BambuStudio.conf\` is synthesized with only the keys R2/R3 read, plus the MD5 trailer:
+\`app.sync_user_preset: false\`, \`models\` (Bambu Lab X2D with the 0.4 and 0.6 nozzles, Bambu
+Lab P1S with 0.4) and \`presets\` (printer \`Bambu Lab X2D 0.4 nozzle\`, process
+\`0.20mm Standard @BBL X2D\`, filament \`Generic PLA @BBL X2D 0.4 nozzle\`).
+
+The user presets in \`user/1000000001/\` are synthesized like those of \`types-bambu/\`, with the
+compatibility keys below added as their own settings:
+
+${unsupportedTable()}
+
+Expected: 4 unsupported (2 R2 filament, 1 R2 and 1 R3 process), 6 OK; no warnings. One
+scan-level R3_NOT_FOR_SELECTION note counts 1 filament (other process) and 2 process presets.
 `;
 fs.writeFileSync(path.join(outRoot, 'README.md'), readme, 'utf8');
 
 const total = systemFiles.reduce((n, f) => n + Buffer.byteLength(f.text), 0);
 console.log(
-  `Wrote ${Object.keys(fixtures).length} fixtures to ${path.relative(repoRoot, outRoot)}: ` +
+  `Wrote ${Object.keys(fixtures).length + 2} fixtures to ${path.relative(repoRoot, outRoot)}: ` +
     `${systemFiles.length} system files (${Math.round(total / 1024)} KB each copy), ` +
     `${settingIdMap.size} setting ids anonymized.`,
 );

@@ -2,7 +2,7 @@
   "name": "@preset-doctor/web",
   "version": "0.1.0",
   "private": true,
-  "description": "Preset Doctor in the browser (GitHub Pages): repairs a copy of the Bambu Studio folder.",
+  "description": "Preset Doctor in the browser (GitHub Pages): repairs a copy of the Bambu Studio or OrcaSlicer folder.",
   "license": "MIT",
   "type": "module",
   "scripts": {

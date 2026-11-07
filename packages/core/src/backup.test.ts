@@ -232,6 +232,7 @@ describe('listBackups', () => {
       fileCount: 1,
       bytes: expect.any(Number),
       createdAt: T1.toISOString(),
+      slicer: 'bambu',
     });
   });
 
@@ -272,7 +273,9 @@ describe('assertBackupCovers', () => {
 
   it('refuses a backup it did not see being made', () => {
     expect(() =>
-      assertBackupCovers({ id: 'x', path: 'x.zip', fileCount: 1, bytes: 1 }, ['user/1/a.json']),
+      assertBackupCovers({ id: 'x', path: 'x.zip', fileCount: 1, bytes: 1, slicer: 'bambu' }, [
+        'user/1/a.json',
+      ]),
     ).toThrow(BackupCoverageError);
   });
 

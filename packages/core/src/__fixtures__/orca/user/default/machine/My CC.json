@@ -1,0 +1,17 @@
+{
+    "auxiliary_fan": "1",
+    "from": "User",
+    "inherits": "Elegoo Centauri Carbon 0.4 nozzle",
+    "name": "My CC",
+    "nozzle_diameter": [
+        "0.4"
+    ],
+    "printable_area": [
+        "0x0",
+        "257x0",
+        "257x257",
+        "0x257"
+    ],
+    "printer_settings_id": "My CC",
+    "version": "2.3.2.0"
+}

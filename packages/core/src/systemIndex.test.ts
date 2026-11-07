@@ -3,7 +3,15 @@ import { describe, expect, it } from 'vitest';
 import type { PresetFs } from './fs.js';
 import { memFs } from './memFs.js';
 import { nodeFs } from './node/nodeFs.js';
-import { SystemIndexError, loadSystemIndex } from './systemIndex.js';
+import {
+  LIST_KEY,
+  SystemIndexError,
+  loadSystemIndex,
+  loadSystemIndexes,
+  loadSystemIndexSet,
+  studioNameLookup,
+} from './systemIndex.js';
+import { fakeStudio } from './testing/studio.js';
 import { FIXTURE_NAMES, fixtureRoot } from './testing/fixtures.js';
 
 const BOM = String.fromCharCode(0xfeff);
@@ -60,6 +68,7 @@ describe('loadSystemIndex on fixtures', () => {
       name: 'Generic PETG @BBL X2D',
       subPath: 'filament/Generic PETG @BBL X2D.json',
       path: 'system/BBL/filament/Generic PETG @BBL X2D.json',
+      vendor: 'BBL',
     });
     expect(fs.reads).toEqual(['system/BBL.json']);
   });
@@ -397,6 +406,68 @@ describe('loadSystemIndex edge cases', () => {
     const index = await loadSystemIndex(fs, { vendor: 'Acme', listKey: 'process_list' });
     expect(index.version).toBeNull();
     expect((await index.load('P'))?.path).toBe('system/Acme/process/P.json');
+  });
+});
+
+describe('process and printer indexes', () => {
+  it('reads process_list and machine_list of the types fixture', async () => {
+    const set = await loadSystemIndexSet(fixtureFs('types-bambu'));
+    expect(set.errors).toEqual({});
+    expect(set.version).toBe('02.08.00.06');
+    expect(set.byType.process?.names()).toContain('0.20mm Standard @BBL X1C');
+    expect(set.byType.process?.has('Generic PLA @BBL X2D')).toBe(false);
+    expect(set.byType.machine?.names()).toContain('Bambu Lab X1 Carbon 0.4 nozzle');
+    expect(set.byType.filament?.names()).toContain('Generic PLA @BBL X2D');
+    expect(set.warnings).toEqual([]);
+  });
+
+  it('inherits printer_model and compatible_printers through the chain', async () => {
+    const set = await loadSystemIndexSet(fixtureFs('types-bambu'));
+    const machine = set.byType.machine!;
+    expect(await machine.effectiveValue('Bambu Lab X2D 0.6 nozzle', 'printerModel')).toBe(
+      'Bambu Lab X2D',
+    );
+    expect(await machine.effectiveValue('Bambu Lab X2D 0.6 nozzle', 'printerVariant')).toBe('0.6');
+    const proc = set.byType.process!;
+    expect(await proc.effectiveCompatiblePrinters('0.20mm Standard @BBL X1C')).toContain(
+      'Bambu Lab X1 Carbon 0.4 nozzle',
+    );
+    expect(await proc.effectiveValue('fdm_process_common', 'printerModel')).toBeNull();
+  });
+
+  it('treats a missing process or machine list as empty, and a missing filament list as an error', async () => {
+    const fs = memFs({
+      'system/BBL.json': JSON.stringify({ name: 'Bambulab', version: '01.02.03.04' }),
+    });
+    const set = await loadSystemIndexSet(fs);
+    expect(set.byType.process?.names()).toEqual([]);
+    expect(set.byType.machine?.names()).toEqual([]);
+    expect(set.byType.filament).toBeNull();
+    expect(set.errors.filament).toBeInstanceOf(SystemIndexError);
+    const one = await loadSystemIndexes(fs, { listKey: LIST_KEY.process, optionalList: true });
+    expect(one.names()).toEqual([]);
+    await expect(loadSystemIndexes(fs, { listKey: LIST_KEY.process })).rejects.toThrow(
+      SystemIndexError,
+    );
+  });
+
+  it('studioNameLookup: a template that presets cannot be based on is no parent', async () => {
+    const fs = fakeStudio(
+      [
+        { name: 'Generic PLA @base', instantiation: 'false' },
+        { name: 'Generic PLA @BBL X2D', inherits: 'Generic PLA @base' },
+      ],
+      [],
+    );
+    const index = await loadSystemIndexes(fs);
+    const lookup = await studioNameLookup(index, [
+      { json: { inherits: 'Generic PLA @base' } },
+      { json: { inherits: 'Generic PLA @BBL X2D' } },
+    ]);
+    expect(lookup.get('Generic PLA @base')).toBeUndefined();
+    expect(lookup.get('Generic PLA @BBL X2D')?.name).toBe('Generic PLA @BBL X2D');
+    // Names no preset asked about fall back to the index.
+    expect(lookup.get('Generic PLA @base ')).toBeUndefined();
   });
 });
 

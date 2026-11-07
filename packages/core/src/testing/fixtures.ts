@@ -5,10 +5,21 @@ import { fileURLToPath } from 'node:url';
 
 export const FIXTURES_DIR = fileURLToPath(new URL('../__fixtures__', import.meta.url));
 
-export const FIXTURE_NAMES = ['healthy', 'broken-r1', 'broken-r4', 'multi-account'] as const;
+export const FIXTURE_NAMES = [
+  'healthy',
+  'broken-r1',
+  'broken-r4',
+  'multi-account',
+  'types-bambu',
+  'unsupported-bambu',
+] as const;
 export type FixtureName = (typeof FIXTURE_NAMES)[number];
 
-export function fixtureRoot(name: FixtureName): string {
+/** OrcaSlicer fixtures (scripts/make-orca-fixture.ts); FIXTURE_NAMES are the Bambu Studio ones. */
+export const ORCA_FIXTURE_NAMES = ['orca'] as const;
+export type OrcaFixtureName = (typeof ORCA_FIXTURE_NAMES)[number];
+
+export function fixtureRoot(name: FixtureName | OrcaFixtureName): string {
   return join(FIXTURES_DIR, name);
 }
 

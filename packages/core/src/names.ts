@@ -143,3 +143,32 @@ export function modelAbbreviations(model: string): string[] {
 export function modelMatchesCode(model: string, code: string): boolean {
   return modelAbbreviations(model).includes(code.toUpperCase());
 }
+
+/** A process preset name, e.g. "0.24mm Balanced Quality @BBL P2S 0.6 nozzle". */
+export interface ParsedProcessName {
+  /** Layer height as written, e.g. "0.24". */
+  layer: string;
+  /** Profile words, e.g. "Balanced Quality". */
+  profile: string;
+  /** Everything after "@" up to the nozzle suffix, e.g. "BBL P2S" or "Elegoo CC". */
+  tag: string;
+  /** Explicit nozzle size as written. BBL names leave out 0.4; OrcaSlicer's Elegoo ones don't. */
+  nozzle?: string;
+}
+
+// Every BBL process name in 88 Studio tags (v01.04.00.17 to v02.09.01.70) has this shape.
+const PROCESS_NAME_RE = /^(\d+(?:\.\d+)?)mm (.+?) @(.+?)(?: (\d+(?:\.\d+)?) nozzle)?$/;
+
+/** Splits a process preset name; null for templates (fdm_process_*) and anything else. */
+export function parseProcessName(name: string): ParsedProcessName | null {
+  const m = PROCESS_NAME_RE.exec(name);
+  if (!m?.[1] || !m[2] || !m[3]) return null;
+  const out: ParsedProcessName = { layer: m[1], profile: m[2], tag: m[3] };
+  if (m[4] !== undefined) out.nozzle = m[4];
+  return out;
+}
+
+/** Case-insensitive, runs of whitespace collapsed, trimmed. Used for "same name" checks. */
+export function looseName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+}

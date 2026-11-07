@@ -5,25 +5,45 @@
  *
  * Only `import type` from core here, so the desktop's sandboxed preload bundle stays tiny.
  */
-import type { BackupInfo, FixChoice, RestoreResult, ScanResult } from '@preset-doctor/core';
+import type {
+  BackupInfo,
+  FixChoice,
+  RestoreResult,
+  ScanResult,
+  SlicerId,
+} from '@preset-doctor/core';
 
-export type { BackupInfo, FixChoice, RestoreResult, ScanResult };
+export type { BackupInfo, FixChoice, RestoreResult, ScanResult, SlicerId };
 
 /**
- * desktop: works in place on the real Bambu Studio folder and checks whether Studio is running.
+ * desktop: works in place on the real slicer folder and checks whether the slicer is running.
  * web: works on a copy the user picked in the browser; it can't see processes, so the user
- * confirms that Studio is closed, and copies the changed files back by hand.
+ * confirms that the slicer is closed, and copies the changed files back by hand.
  */
 export type Platform = 'desktop' | 'web';
+
+/** A slicer whose default folder the desktop app knows. */
+export interface SlicerFolder {
+  id: SlicerId;
+  displayName: string;
+  root: string;
+  exists: boolean;
+}
 
 export interface AppConfig {
   platform: Platform;
   /**
-   * Folder to scan first. Desktop: the detected Bambu Studio folder, or PRESET_DOCTOR_ROOT.
-   * Web: the name of the folder picked last time (browsers don't reveal full paths), or ''.
+   * Folder to scan first. Desktop: PRESET_DOCTOR_ROOT, or the Bambu Studio folder when it exists,
+   * otherwise the OrcaSlicer folder. Web: the name of the folder picked last time (browsers don't
+   * reveal full paths), or ''.
    */
   root: string;
   rootExists: boolean;
+  /**
+   * Desktop: the default folder of each slicer; the header offers a switch when both exist.
+   * Web: [] (the picked folder's files tell the slicer).
+   */
+  slicers: SlicerFolder[];
   /** Where backups go. Desktop: PRESET_DOCTOR_BACKUPS or %APPDATA%\PresetDoctor\backups. */
   backupsDir: string;
   /** True when started with PRESET_DOCTOR_ROOT (tests, or a copy of the folder). */
@@ -57,7 +77,7 @@ export interface PlanOptions {
 }
 
 export interface ApplyPayload {
-  /** Changed files, '/'-joined and relative to the Bambu Studio folder (e.g. `user/1/...`). */
+  /** Changed files, '/'-joined and relative to the slicer folder (e.g. `user/1/...`). */
   written: string[];
   backup: BackupInfo;
   /** False when the backup was already made earlier in this session. */
@@ -76,7 +96,7 @@ export interface RestoreOptions {
 export type StudioState = 'running' | 'closed' | 'unknown';
 
 export type IpcErrorCode =
-  /** Bambu Studio is open, or we couldn't tell. Nothing was written. */
+  /** The slicer (Bambu Studio or OrcaSlicer) is open, or we couldn't tell. Nothing was written. */
   | 'studio-running'
   | 'studio-unknown'
   /** A file changed since the scan or preview. Nothing was written. */
@@ -85,13 +105,15 @@ export type IpcErrorCode =
   | 'partial'
   /** Bad request from the UI (unknown plan, folder not allowed, ...). */
   | 'invalid'
-  /** The folder isn't a Bambu Studio folder, or can't be read. */
+  /** The folder isn't a Bambu Studio or OrcaSlicer folder, or can't be read. */
   | 'scan-failed'
   /**
    * The backup was made from another folder than the restore target. Nothing was written;
    * restore again with allowOtherSource once the user has confirmed.
    */
   | 'other-source'
+  /** The backup was made from the other slicer's folder. Nothing was written. */
+  | 'other-slicer'
   | 'failed';
 
 export interface IpcError {
@@ -120,7 +142,10 @@ export interface PresetDoctorApi {
     backupId: string,
     options?: RestoreOptions,
   ): Promise<IpcResult<RestorePayload>>;
-  /** The web version always answers 'unknown'; the user confirms instead. */
+  /**
+   * Whether the slicer of the last scanned folder is running. The web version always answers
+   * 'unknown'; the user confirms instead.
+   */
   studioStatus(): Promise<IpcResult<StudioState>>;
   /** Opens a folder picker. Resolves to the folder to scan, or null when cancelled. */
   pickFolder(): Promise<IpcResult<string | null>>;

@@ -34,6 +34,11 @@ describe('infoFile round-trip over every fixture', () => {
   it('fixtures carry only anonymized account ids', () => {
     for (const rel of infoFixtures) {
       const userId = getInfoValue(parseInfoFile(readFixture(rel)), 'user_id');
+      // OrcaSlicer's logged-out folder: no account id at all.
+      if (rel.includes('/user/default/')) {
+        expect(userId, rel).toBe('');
+        continue;
+      }
       expect(['1000000001', '1000000002'], rel).toContain(userId);
       expect(rel).toContain(`/user/${userId}/`);
     }

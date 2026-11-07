@@ -1,0 +1,12 @@
+{
+    "auxiliary_fan": "0",
+    "bed_exclude_area": [],
+    "from": "User",
+    "inherits": "Bambu Lab N1 0.4 nozzle",
+    "name": "Old Model Name",
+    "nozzle_diameter": [
+        "0.4"
+    ],
+    "printer_settings_id": "Old Model Name",
+    "version": "2.8.0.6"
+}

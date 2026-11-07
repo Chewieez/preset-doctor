@@ -4,14 +4,18 @@
  */
 import { basename } from '../fs.js';
 import { presetName, userInherits } from '../resolve.js';
+import { TERMS } from '../terms.js';
 import { RULE_IDS, type Finding, type UserPreset } from '../types.js';
 
 export const R4_ID = RULE_IDS.malformed;
 
 export interface R4Context {
-  /** All presets of the scanned account, to check that a rename can't clash or orphan anyone. */
+  /**
+   * The scanned account's presets of the same type, to check that a rename can't clash or orphan
+   * anyone (names only clash within a type: a process may share a filament's name).
+   */
   presets: readonly UserPreset[];
-  /** System preset names; a user preset must not be renamed onto one. */
+  /** System preset names of that type; a user preset must not be renamed onto one. */
   system?: { has(name: string): boolean };
   /**
    * User preset names that R1 suggests as a new parent, mapped to the orphan suggesting it
@@ -49,6 +53,8 @@ export function checkR4(preset: UserPreset, ctx: R4Context): Finding[] {
 
   const findings: Finding[] = [];
   const name = presetName(preset);
+  // UserPreset objects made by hand (tests, simulations) may predate the type field.
+  const type = preset.type ?? 'filament';
   if (name === undefined) {
     findings.push({
       ...base,
@@ -57,7 +63,7 @@ export function checkR4(preset: UserPreset, ctx: R4Context): Finding[] {
       status: 'broken',
       title: 'Preset has no name',
       explanation:
-        'The file has no "name" setting, so Studio has nothing to show in the filament list. ' +
+        `The file has no "name" setting, so Studio has nothing to show in the ${TERMS[type].list}. ` +
         'Recreate the preset in Bambu Studio, or restore it from a backup.',
     });
   } else if (studioFileStem(name) !== preset.fileStem) {
@@ -74,7 +80,7 @@ export function checkR4(preset: UserPreset, ctx: R4Context): Finding[] {
       explanation: preset.infoIsFolder
         ? `There is a folder named "${basename(preset.infoPath)}" where this preset's sync file ` +
           "should be. Studio can't use it, and scanning again won't change that: move that " +
-          'folder out of the filament folder, then scan again.'
+          `folder out of the ${type} folder, then scan again.`
         : "Preset Doctor couldn't open this preset's sync file. Another program may be holding " +
           'it open: close OneDrive or pause the antivirus scan, then scan again. ' +
           `(Details: ${preset.infoError})`,

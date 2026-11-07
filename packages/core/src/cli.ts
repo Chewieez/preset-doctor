@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assertBackupCovers,
   BackupCoverageError,
+  BackupSlicerError,
   BackupSourceError,
   createBackup,
   listBackups,
@@ -27,10 +28,28 @@ import {
 import { unifiedDiff } from './diff.js';
 import { errorMessage } from './fs.js';
 import { VERSION } from './index.js';
-import { defaultPaths, isStudioRunning, type DefaultPaths } from './node/studioProcess.js';
+import { defaultPaths, isSlicerRunning, type DefaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
+import { R3_NOTE_ID } from './rules/r2r3.js';
 import { R5_ID, scan, ScanError } from './scan.js';
-import type { Finding, PresetStatus, PresetSummary, ScanResult } from './types.js';
+import {
+  BAMBU,
+  detectSlicer,
+  ORCA,
+  slicerById,
+  slicerFolder,
+  type SlicerProfile,
+} from './slicer.js';
+import { TERMS } from './terms.js';
+import {
+  PRESET_TYPES,
+  type Finding,
+  type PresetStatus,
+  type PresetSummary,
+  type PresetType,
+  type ScanResult,
+  type SlicerId,
+} from './types.js';
 
 export const EXIT = {
   /** Finished; for `scan`, no hidden or broken presets. */
@@ -41,7 +60,7 @@ export const EXIT = {
   usage: 2,
   /** Could not read or write something (wrong folder, unknown account, failed write). */
   failed: 3,
-  /** Refused for safety: Studio is running, or files changed since they were checked. */
+  /** Refused for safety: the slicer is running, or files changed since they were checked. */
   refused: 4,
 } as const;
 
@@ -49,30 +68,37 @@ export interface CliDeps {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   paths: DefaultPaths;
-  isStudioRunning: () => Promise<boolean>;
+  /** Whether the slicer whose folder is written is running (Bambu Studio when not given). */
+  isStudioRunning: (slicer?: SlicerProfile) => Promise<boolean>;
   now: () => Date;
 }
 
-const HELP = `Preset Doctor ${VERSION}: finds and repairs Bambu Studio filament presets that
-disappeared after a Studio update. Works offline; nothing leaves your computer.
-Not affiliated with Bambu Lab.
+const HELP = `Preset Doctor ${VERSION} for Bambu Studio and OrcaSlicer: finds and repairs presets
+(filament, process and printer) that disappeared after a slicer update. Works offline; nothing
+leaves your computer. Not affiliated with Bambu Lab or the OrcaSlicer project.
 
 Usage:
-  preset-doctor scan [folder] [--user <id>] [--json]
-      List every filament preset and whether Studio can show it.
-  preset-doctor fix [folder] [--user <id>] [--dry-run]
+  preset-doctor scan [folder] [--slicer <name>] [--user <id>] [--type <types>] [--json]
+      List every preset and whether the slicer can show it.
+  preset-doctor fix [folder] [--slicer <name>] [--user <id>] [--type <types>] [--dry-run]
       Show the repairs Preset Doctor is confident about, as diffs. Writes nothing.
-  preset-doctor fix [folder] [--user <id>] --apply --yes [--no-base-id]
-      Back up the user folder, then make those repairs. Close Bambu Studio first.
+  preset-doctor fix [folder] [...] --apply --yes [--no-base-id]
+      Back up the user folder, then make those repairs. Close the slicer first.
   preset-doctor backups [list]
       List backups made before repairs.
-  preset-doctor backups restore <id> [folder] --yes [--from-other-folder]
+  preset-doctor backups restore <id> [folder] [--slicer <name>] --yes [--from-other-folder]
       Put a backup back (the current state is backed up first). A backup made from another
-      folder is refused unless --from-other-folder is given.
+      folder is refused unless --from-other-folder is given; one made from the other slicer's
+      folder is always refused.
 
 Options:
-  folder           Bambu Studio data folder. Default: %APPDATA%\\BambuStudio
+  folder           The slicer's data folder. Default: %APPDATA%\\BambuStudio, or with
+                   --slicer orca, %APPDATA%\\OrcaSlicer. The slicer is read from the folder.
+  --slicer <name>  bambu or orca: which default folder to use. With a folder, it must be that
+                   slicer's folder.
   --user <id>      Account folder under user\\ to check. Default: the one with most presets.
+  --type <types>   Only these preset types: filament, process, printer (or machine), comma-
+                   separated or repeated. Default: all. --json always prints everything.
   --json           Print the scan result as JSON.
   --no-base-id     Don't update base_id in the .info sync files when changing a parent.
   --backups <dir>  Backup folder. Default: %APPDATA%\\PresetDoctor\\backups
@@ -84,13 +110,17 @@ Exit codes:
   2  bad command line
   3  something could not be read or written (scan: the system presets could not be read,
      so parent presets were not checked)
-  4  refused for safety (Bambu Studio is running, files changed meanwhile, or a backup
-     came from another folder)
+  4  refused for safety (the slicer is running, files changed meanwhile, or a backup
+     came from another folder or the other slicer)
 `;
 
 interface Args {
   positional: string[];
   user?: string;
+  /** --type, in the order given; undefined means every type. */
+  types?: PresetType[];
+  /** --slicer. */
+  slicer?: SlicerId;
   backups?: string;
   json: boolean;
   dryRun: boolean;
@@ -137,10 +167,12 @@ function parseArgs(argv: readonly string[]): Args {
     const a = argv[i]!;
     const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a];
     const key = flag === undefined ? undefined : FLAGS.get(flag);
-    if (flag === '--user' || flag === '--backups') {
+    if (flag === '--user' || flag === '--backups' || flag === '--type' || flag === '--slicer') {
       const value = inline ?? argv[++i];
       if (value === undefined || value === '') throw new UsageError(`${flag} needs a value.`);
       if (flag === '--user') args.user = value;
+      else if (flag === '--type') args.types = addTypes(args.types ?? [], value);
+      else if (flag === '--slicer') args.slicer = slicerArg(value);
       else args.backups = value;
     } else if (key !== undefined) {
       args[key] = true;
@@ -153,12 +185,44 @@ function parseArgs(argv: readonly string[]): Args {
   return args;
 }
 
+/** "orca" / "OrcaSlicer" -> 'orca'; "bambu" / "BambuStudio" / "studio" -> 'bambu'. */
+function slicerArg(value: string): SlicerId {
+  const v = value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+  if (v === 'orca' || v === 'orcaslicer') return 'orca';
+  if (v === 'bambu' || v === 'bambustudio' || v === 'studio') return 'bambu';
+  throw new UsageError(`Unknown slicer "${value}" for --slicer. Use bambu or orca.`);
+}
+
+/** "process,printer" -> ['process', 'machine'], added to `types` without repeats. */
+function addTypes(types: PresetType[], value: string): PresetType[] {
+  const out = [...types];
+  for (const raw of value.split(',')) {
+    const word = raw.trim().toLowerCase();
+    const type = word === 'printer' ? 'machine' : PRESET_TYPES.find((t) => t === word);
+    if (type === undefined) {
+      throw new UsageError(
+        `Unknown preset type "${raw.trim()}" for --type. Use filament, process or printer.`,
+      );
+    }
+    if (!out.includes(type)) out.push(type);
+  }
+  return out;
+}
+
+/** True when --type selects this preset's type (every type without --type). */
+function selected(args: Args, p: { type?: PresetType }): boolean {
+  return args.types === undefined || args.types.includes(p.type ?? 'filament');
+}
+
 export async function main(argv: readonly string[], deps: Partial<CliDeps> = {}): Promise<number> {
   const d: CliDeps = {
     stdout: (t) => process.stdout.write(t),
     stderr: (t) => process.stderr.write(t),
     paths: deps.paths ?? defaultPaths(),
-    isStudioRunning: () => isStudioRunning(),
+    isStudioRunning: (slicer) => isSlicerRunning(slicer ?? BAMBU),
     now: () => new Date(),
     ...deps,
   };
@@ -208,14 +272,31 @@ export async function main(argv: readonly string[], deps: Partial<CliDeps> = {})
   }
 }
 
-function rootArg(rest: string[], d: CliDeps): string {
+function rootArg(rest: string[], d: CliDeps, args: Args): string {
   if (rest.length > 1) throw new UsageError(`Too many arguments: ${rest.join(' ')}.`);
-  return rest[0] ?? d.paths.studioRoot;
+  return rest[0] ?? (args.slicer === 'orca' ? d.paths.orcaRoot : d.paths.studioRoot);
+}
+
+/**
+ * The slicer of the folder, read from its files. With --slicer, a folder of the other slicer is a
+ * usage error. A folder that can't be told apart counts as --slicer's, or Bambu Studio's.
+ */
+async function folderSlicer(root: string, args: Args): Promise<SlicerProfile> {
+  const detected = await detectSlicer(nodeFs(root, { readOnly: true }));
+  if (detected.ok && args.slicer !== undefined && detected.profile.id !== args.slicer) {
+    throw new UsageError(
+      `${root} is ${slicerFolder(detected.profile.id)}, not ${slicerFolder(args.slicer)} ` +
+        `(${detected.evidence})`,
+    );
+  }
+  if (detected.ok) return detected.profile;
+  return slicerById(args.slicer ?? 'bambu');
 }
 
 async function runScan(root: string, args: Args): Promise<ScanResult> {
   const fs = nodeFs(root, { readOnly: true });
   if (!(await fs.exists(''))) throw new ScanError(`The folder ${root} does not exist.`);
+  await folderSlicer(root, args);
   return scan(fs, args.user !== undefined ? { userId: args.user, root } : { root });
 }
 
@@ -225,33 +306,45 @@ async function scanCommand(
   d: CliDeps,
   out: (l?: string) => void,
 ): Promise<number> {
-  const result = await runScan(rootArg(rest, d), args);
+  const result = await runScan(rootArg(rest, d, args), args);
   if (args.json) out(JSON.stringify(result, null, 2));
   else printScan(result, args, out);
-  // Without the system index no parent was checked: a clean exit would claim nothing is hidden.
-  if (!result.systemIndexRead && result.presets.some((p) => p.inherits)) {
+  const rows = result.presets.filter((p) => selected(args, p));
+  // Without a type's system index no parent of that type was checked: a clean exit would claim
+  // nothing is hidden.
+  if (rows.some((p) => p.inherits && !indexRead(result, p))) {
     if (!args.json) {
       out();
       out(
-        'INCOMPLETE: the system presets could not be read, so Preset Doctor could not check ' +
-          'whether the parent presets still exist. Open Bambu Studio once, close it, and scan again.',
+        slicerById(result.slicer).reword(
+          'INCOMPLETE: the system presets could not be read, so Preset Doctor could not check ' +
+            'whether the parent presets still exist. Open Bambu Studio once, close it, and scan again.',
+        ),
       );
     }
     return EXIT.failed;
   }
-  const bad = result.presets.some((p) => p.status === 'hidden' || p.status === 'broken');
+  const bad = rows.some((p) => p.status === 'hidden' || p.status === 'broken');
   return bad ? EXIT.problems : EXIT.ok;
+}
+
+/** Whether the system index of the preset's type could be read. */
+function indexRead(r: ScanResult, p: PresetSummary): boolean {
+  return r.indexesRead[p.type ?? 'filament'];
 }
 
 const GROUPS: { status: PresetStatus; label: string }[] = [
   { status: 'hidden', label: 'Hidden in Studio' },
   { status: 'broken', label: 'Broken' },
+  // Printed only when the printer checks ran, so output without them stays as it was.
+  { status: 'unsupported', label: 'Loaded, but not offered for your printers' },
   { status: 'info', label: 'OK, with notes' },
   { status: 'ok', label: 'OK' },
 ];
 
 function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
   printHeader(r, out);
+  const profile = slicerById(r.slicer);
   const byPath = new Map<string, Finding[]>();
   for (const f of r.findings) {
     const list = byPath.get(f.presetPath);
@@ -259,29 +352,43 @@ function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
     else byPath.set(f.presetPath, [f]);
   }
 
+  const shown = r.presets.filter((p) => selected(args, p));
+  // With more than one type, each group lists its rows per type, under a sub-heading.
+  const types = PRESET_TYPES.filter((t) => shown.some((p) => p.type === t));
+  const nested = types.length > 1;
+  const indent = nested ? '    ' : '  ';
   for (const g of GROUPS) {
-    const rows = r.presets.filter((p) => p.status === g.status);
+    if (g.status === 'unsupported' && !r.compat.checked) continue;
+    const rows = shown.filter((p) => p.status === g.status);
     out();
-    out(`${g.label} (${rows.length})`);
+    out(`${profile.reword(g.label)} (${rows.length})`);
     if (rows.length === 0) continue;
     const width = Math.min(48, Math.max(...rows.map((p) => label(p).length)));
-    for (const p of rows) {
-      out(`  ${label(p).padEnd(width)}  ${p.reason}`);
-      if (g.status === 'ok') continue;
-      for (const f of byPath.get(p.path) ?? []) {
-        const note = fixNote(f);
-        if (note) out(`  ${''.padEnd(width)}  ${note}`);
+    for (const type of nested ? types : [undefined]) {
+      const part = type === undefined ? rows : rows.filter((p) => p.type === type);
+      if (part.length === 0) continue;
+      if (type !== undefined) out(`  ${TERMS[type].tab}:`);
+      for (const p of part) {
+        out(`${indent}${label(p).padEnd(width)}  ${p.reason}`);
+        if (g.status === 'ok') continue;
+        for (const f of byPath.get(p.path) ?? []) {
+          const note = fixNote(f);
+          if (note) out(`${indent}${''.padEnd(width)}  ${note}`);
+        }
       }
     }
   }
 
-  const count = (s: PresetStatus): number => r.presets.filter((p) => p.status === s).length;
+  const count = (s: PresetStatus): number => shown.filter((p) => p.status === s).length;
   out();
+  const unsupported = count('unsupported');
   out(
     `Summary: ${count('hidden')} hidden, ${count('broken')} broken, ` +
+      (unsupported > 0 ? `${unsupported} unsupported, ` : '') +
       `${count('info')} OK with notes, ${count('ok')} OK.`,
   );
-  if (r.findings.some((f) => f.proposedFix)) {
+  const paths = new Set(shown.map((p) => p.path));
+  if (r.findings.some((f) => f.proposedFix && paths.has(f.presetPath))) {
     out(`To preview repairs: ${fixHint(r.root, args, r, '--dry-run')}`);
   }
 }
@@ -289,6 +396,9 @@ function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
 function printHeader(r: ScanResult, out: (l?: string) => void): void {
   out(`Preset Doctor ${VERSION}`);
   out(`Folder:  ${r.root}`);
+  // Bambu Studio output stays as it was before OrcaSlicer was supported.
+  if (r.slicer === 'orca')
+    out(`Slicer:  ${ORCA.displayName} ${r.slicerVersion ?? '(version unknown)'}`);
   out(`System presets: ${r.systemVersion ? `version ${r.systemVersion}` : 'could not be read'}`);
   const me = r.accounts.find((a) => a.id === r.userId);
   const others = r.accounts.filter((a) => a.id !== r.userId);
@@ -298,11 +408,23 @@ function printHeader(r: ScanResult, out: (l?: string) => void): void {
         ? `; others: ${others.map((a) => `${a.id} (${a.presetCount})`).join(', ')}`
         : ''),
   );
-  for (const f of r.findings.filter((x) => x.ruleId === R5_ID)) {
+  if (r.compat.checked) out(`Printers: ${printersLine(r)}`);
+  for (const f of r.findings.filter((x) => x.ruleId === R5_ID || x.ruleId === R3_NOTE_ID)) {
     out();
     out(`Note: ${f.title}. ${f.explanation}`);
   }
   for (const w of r.warnings) out(`Note: ${w}`);
+}
+
+/** "Bambu Lab X2D (0.4, 0.6 mm), Bambu Lab P1S (0.4 mm); selected: Bambu Lab X2D 0.4 nozzle" */
+function printersLine(r: ScanResult): string {
+  const c = r.compat;
+  const parts = c.enabled.map((m) => `${m.model} (${m.nozzles.join(', ')} mm)`);
+  if (c.userPrinters > 0) {
+    parts.push(`${c.userPrinters} printer preset${c.userPrinters === 1 ? '' : 's'} of your own`);
+  }
+  const added = parts.length > 0 ? parts.join(', ') : 'none added';
+  return added + (c.selectedPrinter !== undefined ? `; selected: ${c.selectedPrinter}` : '');
 }
 
 function label(p: PresetSummary): string {
@@ -316,6 +438,10 @@ function fixNote(f: Finding): string | undefined {
     return f.status === 'hidden' && f.severity === 'error' ? 'no replacement found' : undefined;
   const pick = fix.candidates.find((c) => c.preselected);
   if (pick) return `fix: switch parent to "${pick.name}" (${pick.confidence} confidence)`;
+  // Printer presets are never pre-selected, however good the match: the user has the printer.
+  if (f.presetType === 'machine') {
+    return `${fix.candidates.length} possible replacement(s); pick the printer you have in the app`;
+  }
   return `${fix.candidates.length} possible replacement(s), none certain; pick one in the app`;
 }
 
@@ -327,9 +453,11 @@ async function fixCommand(
   err: (l: string) => void,
 ): Promise<number> {
   if (args.apply && args.dryRun) throw new UsageError('Use either --dry-run or --apply, not both.');
-  const root = rootArg(rest, d);
+  const root = rootArg(rest, d, args);
   const result = await runScan(root, args);
-  const choices = defaultChoices(result);
+  const profile = slicerById(result.slicer);
+  const inScope = new Set(result.presets.filter((p) => selected(args, p)).map((p) => p.path));
+  const choices = defaultChoices(result).filter((c) => inScope.has(c.presetPath));
   const readFs = nodeFs(root, { readOnly: true });
   const changes = await planFixes(readFs, result, choices, { updateBaseId: !args.noBaseId });
 
@@ -337,6 +465,7 @@ async function fixCommand(
   const unfixable = result.findings.filter(
     (f) =>
       (f.status === 'hidden' || f.status === 'broken') &&
+      inScope.has(f.presetPath) &&
       !choices.some((c) => c.presetPath === f.presetPath),
   );
 
@@ -362,14 +491,14 @@ async function fixCommand(
       out();
       out('Dry run: nothing was written.');
       out(
-        `To make these repairs, close Bambu Studio and run: ${fixHint(root, args, result, '--apply --yes')}`,
+        `To make these repairs, close ${profile.displayName} and run: ${fixHint(root, args, result, '--apply --yes')}`,
       );
     }
     return EXIT.ok;
   }
   if (!args.yes) throw new UsageError('Add --yes to confirm that these files should be changed.');
 
-  if (!(await studioClosed(d, err))) return EXIT.refused;
+  if (!(await studioClosed(d, err, profile))) return EXIT.refused;
 
   const writeFs = nodeFs(root);
   // Before the backup: a planned file that is gone since the scan is stale, not "not backed up".
@@ -380,6 +509,7 @@ async function fixCommand(
     now: d.now(),
     reason: 'before-fix',
     sourceRoot: nodePath.resolve(root),
+    slicer: profile.id,
   });
   out();
   out(`Backed up ${backup.fileCount} files to ${backupsDir} (backup ${backup.id}).`);
@@ -407,27 +537,30 @@ async function fixCommand(
     throw e;
   }
   out(`To undo: ${restoreHint(backup.id, root, args)}`);
-  out('Next: open Bambu Studio and check that the presets are back.');
+  out(`Next: open ${profile.displayName} and check that the presets are back.`);
   if (result.findings.some((f) => f.ruleId === R5_ID)) {
     out(
       'Cloud preset sync is on: to upload a repair to your other computers, open the preset in ' +
-        'Bambu Studio and save it.',
+        `${profile.displayName} and save it.`,
     );
   }
   return EXIT.ok;
 }
 
-async function studioClosed(d: CliDeps, err: (l: string) => void): Promise<boolean> {
+async function studioClosed(
+  d: CliDeps,
+  err: (l: string) => void,
+  profile: SlicerProfile,
+): Promise<boolean> {
+  const name = profile.displayName;
   let running: boolean;
   try {
-    running = await d.isStudioRunning();
+    running = await d.isStudioRunning(profile);
   } catch (e) {
-    err(
-      `Could not check whether Bambu Studio is running (${errorMessage(e)}), so nothing was changed.`,
-    );
+    err(`Could not check whether ${name} is running (${errorMessage(e)}), so nothing was changed.`);
     return false;
   }
-  if (running) err('Bambu Studio is running. Close it and run this again; nothing was changed.');
+  if (running) err(`${name} is running. Close it and run this again; nothing was changed.`);
   return !running;
 }
 
@@ -457,7 +590,8 @@ async function backupsCommand(
     for (const b of list) {
       out(
         `  ${b.id.padEnd(22)}  ${String(b.fileCount).padStart(4)} files  ` +
-          `${(b.reason ?? '').padEnd(14)}  from ${b.sourceRoot ?? '(unknown folder)'}`,
+          `${(b.reason ?? '').padEnd(14)}  from ${b.sourceRoot ?? '(unknown folder)'}` +
+          (b.slicer === 'orca' ? ` (${ORCA.displayName})` : ''),
       );
     }
     return EXIT.ok;
@@ -467,18 +601,24 @@ async function backupsCommand(
     const [id, ...folder] = more;
     if (id === undefined)
       throw new UsageError('Which backup? Usage: preset-doctor backups restore <id>');
-    const root = rootArg(folder, d);
+    const root = rootArg(folder, d, args);
     if (!args.yes)
       throw new UsageError('Add --yes to confirm that the user folder should be replaced.');
-    if (!(await studioClosed(d, err))) return EXIT.refused;
+    const profile = await folderSlicer(root, args);
+    if (!(await studioClosed(d, err, profile))) return EXIT.refused;
     let result;
     try {
       result = await restoreBackup(nodeFs(root), destFs, id, {
         now: d.now(),
         expectedRoot: nodePath.resolve(root),
         allowOtherSource: args.fromOtherFolder,
+        slicer: profile.id,
       });
     } catch (e) {
+      if (e instanceof BackupSlicerError) {
+        err(e.message);
+        return EXIT.refused;
+      }
       if (e instanceof RestoreError) {
         err(e.message);
         if (e.safetyBackup) {
@@ -495,6 +635,7 @@ async function backupsCommand(
       return EXIT.refused;
     }
     out(`Restored ${result.restoredCount} files from backup ${id} into ${root}.`);
+    if (result.skipped.length > 0) out(skippedNote(result.skipped.length));
     if (result.safetyBackup) {
       out(`The state before the restore was saved as backup ${result.safetyBackup.id}.`);
     }
@@ -504,16 +645,29 @@ async function backupsCommand(
   throw new UsageError(`Unknown backups command "${sub}".`);
 }
 
+/** Why some sync files were not put back (OrcaSlicer; see RestoreResult.skipped). */
+export function skippedNote(n: number): string {
+  return (
+    `${n} sync file${n === 1 ? ' was' : 's were'} not put back because ${n === 1 ? 'its preset is' : 'their presets are'} ` +
+    'gone, and restoring them alone could make OrcaSlicer delete those presets from your cloud.'
+  );
+}
+
 /**
- * The `fix` command to run next, with the same account, base_id and backups options as this
- * run: without --user, scan would pick the account with the most presets, which may not be the
- * one just previewed.
+ * The `fix` command to run next, with the same account, types, base_id and backups options as
+ * this run: without --user, scan would pick the account with the most presets, which may not be
+ * the one just previewed.
  */
 function fixHint(root: string, args: Args, result: ScanResult, mode: string): string {
   const user =
     args.user !== undefined || result.accounts.length > 1 ? ` --user ${quote(result.userId)}` : '';
+  const types =
+    args.types !== undefined
+      ? ` --type ${args.types.map((t) => (t === 'machine' ? 'printer' : t)).join(',')}`
+      : '';
+  const slicer = args.slicer !== undefined ? ` --slicer ${args.slicer}` : '';
   return (
-    `preset-doctor fix ${quote(root)}${user} ${mode}` +
+    `preset-doctor fix ${quote(root)}${slicer}${user}${types} ${mode}` +
     (args.noBaseId ? ' --no-base-id' : '') +
     backupsFlag(args)
   );

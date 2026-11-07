@@ -12,7 +12,7 @@
  * "SUNLU PETG @BBL A1M 0.4 nozzle"), so names stay keyed by the index and findByStudioName()
  * gives the answer Studio would, reading only the files it needs.
  */
-import { dirname, errorMessage, isNotFound, joinPath, type PresetFs } from './fs.js';
+import { dirname, errorMessage, isNotFound, joinPath, type DirEntry, type PresetFs } from './fs.js';
 import { isRecord, stripBom } from './jsonFile.js';
 import {
   modelMatchesCode,
@@ -20,6 +20,9 @@ import {
   parsePresetName,
   type ParsedPresetName,
 } from './names.js';
+import { opcHasString, readOpc, type OpaqueVendor } from './opc.js';
+import { BAMBU, type SlicerProfile } from './slicer.js';
+import { PRESET_TYPES, type PresetType } from './types.js';
 
 export interface SystemIndexOptions {
   /** Vendor folder and index file name. Default 'BBL'. */
@@ -28,7 +31,25 @@ export interface SystemIndexOptions {
   listKey?: string;
   /** Check that every listed file exists (one folder listing per folder). Default true. */
   checkFiles?: boolean;
+  /**
+   * An index without the list is an empty index rather than an error. Default false. Used for
+   * process_list and machine_list, which vendor indexes may leave out.
+   */
+  optionalList?: boolean;
+  /**
+   * A vendor whose presets this vendor's system presets may inherit (OrcaSlicer's filament
+   * library). Chain walks look a parent up here when this vendor doesn't list it, and stay here
+   * once they have, as Orca does (src/libslic3r/PresetBundle.cpp:7797-7826@v2.5.0).
+   */
+  base?: SystemIndex;
 }
+
+/** The index list of each preset type in system/<vendor>.json. */
+export const LIST_KEY: Record<PresetType, string> = {
+  filament: 'filament_list',
+  process: 'process_list',
+  machine: 'machine_list',
+};
 
 export interface SystemEntry {
   name: string;
@@ -36,6 +57,15 @@ export interface SystemEntry {
   subPath: string;
   /** Root-relative path, e.g. 'system/BBL/filament/P1P/Foo.json'. */
   path: string;
+  /** Vendor id of the index that lists it, e.g. 'BBL'. */
+  vendor: string;
+  /**
+   * The parent is known to exist, but its settings can't be read: it is in an OrcaSlicer .opc
+   * file, or an OrcaSlicer bundle preset (orcaLookup.ts). Such entries are never in an index.
+   */
+  opaque?: true;
+  /** OrcaSlicer found it for another name (orcaLookup.ts): its own name, for texts. */
+  currentName?: string;
 }
 
 /** The parts of a system preset body the rules need. */
@@ -51,7 +81,33 @@ export interface SystemPreset extends SystemEntry {
   /** Only when the file itself sets it; see effectiveCompatiblePrinters for the inherited value. */
   compatiblePrinters?: string[];
   instantiation: boolean;
+  // The fields below are set only when the file itself sets them (see effectiveValue).
+  /** The file's "type" ('filament' | 'process' | 'machine'); g-code template files have none. */
+  fileType?: string;
+  compatiblePrintersCondition?: string;
+  compatiblePrints?: string[];
+  compatiblePrintsCondition?: string;
+  /** Printer presets: "printer_model", e.g. 'Bambu Lab X2D'. */
+  printerModel?: string;
+  /** Printer presets: "printer_variant", the nozzle size, e.g. '0.4'. */
+  printerVariant?: string;
+  /**
+   * OrcaSlicer: the old names in "renamed_from" (C-escaped, separated by ';',
+   * src/libslic3r/PresetBundle.cpp:8484-8488@v2.5.0). Only when the file sets it.
+   */
+  renamedFrom?: string[];
+  /** OrcaSlicer: the file's "alias", which stops Orca from deriving a renamed_from entry. */
+  alias?: string;
 }
+
+/** SystemPreset fields that effectiveValue can resolve through the inherits chain. */
+export type InheritedKey =
+  | 'compatiblePrinters'
+  | 'compatiblePrintersCondition'
+  | 'compatiblePrints'
+  | 'compatiblePrintsCondition'
+  | 'printerModel'
+  | 'printerVariant';
 
 export class SystemIndexError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -97,6 +153,14 @@ export interface SystemIndex {
    * real value (fdm_filament_common sets []). null when no preset in the chain sets it.
    */
   effectiveCompatiblePrinters(name: string): Promise<string[] | null>;
+  /**
+   * A field from the nearest preset in the chain whose file sets it, as Studio inherits values
+   * (src/libslic3r/Preset.cpp:1521-1526@v02.09.01.70); null when none does.
+   */
+  effectiveValue<K extends InheritedKey>(
+    name: string,
+    key: K,
+  ): Promise<NonNullable<SystemPreset[K]> | null>;
   /** Full model for a vendor tag and code, e.g. ('BBL', 'X1C') -> 'Bambu Lab X1 Carbon'. */
   printerModel(vendorTag: string, printerCode: string): Promise<string | null>;
   /** Model for a parsed name: spelled out (wizard names) or looked up from its code. */
@@ -113,11 +177,13 @@ export async function loadSystemIndex(
   const vendor = options.vendor ?? 'BBL';
   const listKey = options.listKey ?? 'filament_list';
   const indexPath = joinPath('system', `${vendor}.json`);
-  const vendorDir = joinPath('system', vendor);
 
   const index = await readIndex(fs, indexPath);
   const warnings: string[] = [];
-  const listed = readList(index, listKey, indexPath, vendorDir, warnings);
+  const listed =
+    options.optionalList && index[listKey] === undefined
+      ? []
+      : readList(index, listKey, indexPath, vendor, warnings);
 
   let missing: SystemEntry[] = [];
   if (options.checkFiles ?? true) {
@@ -210,6 +276,8 @@ export async function loadSystemIndex(
     const out: SystemPreset[] = [];
     const seen = new Set<string>();
     let current: string = name;
+    // Once the walk reaches the base vendor (options.base) it stays there.
+    let inBase = false;
     while (current !== '' && out.length < MAX_CHAIN) {
       if (seen.has(current)) {
         if (!cycleWarned.has(name)) {
@@ -219,8 +287,14 @@ export async function loadSystemIndex(
         break;
       }
       seen.add(current);
-      const body = await load(current);
+      const own = !inBase && entries.has(current);
+      const body = own
+        ? await load(current)
+        : options.base
+          ? await options.base.load(current)
+          : null;
       if (!body) break;
+      if (!own) inBase = true;
       out.push(body);
       if (stop(body)) break;
       current = body.inherits;
@@ -229,9 +303,13 @@ export async function loadSystemIndex(
   };
 
   // Stops at the first preset that sets it, so most lookups read a single file.
-  const effectiveCompatiblePrinters = async (name: string): Promise<string[] | null> =>
-    (await walk(name, (p) => p.compatiblePrinters !== undefined)).at(-1)?.compatiblePrinters ??
-    null;
+  const effectiveValue = async <K extends InheritedKey>(
+    name: string,
+    key: K,
+  ): Promise<NonNullable<SystemPreset[K]> | null> =>
+    (await walk(name, (p) => p[key] !== undefined)).at(-1)?.[key] ?? null;
+  const effectiveCompatiblePrinters = (name: string): Promise<string[] | null> =>
+    effectiveValue(name, 'compatiblePrinters');
 
   const modelCache = new Map<string, Promise<string | null>>();
   const printerModel = (vendorTag: string, printerCode: string): Promise<string | null> => {
@@ -277,6 +355,7 @@ export async function loadSystemIndex(
       ),
     findByStudioName,
     effectiveCompatiblePrinters,
+    effectiveValue,
     printerModel,
     modelOf,
   };
@@ -309,9 +388,10 @@ function readList(
   index: Record<string, unknown>,
   listKey: string,
   indexPath: string,
-  vendorDir: string,
+  vendor: string,
   warnings: string[],
 ): SystemEntry[] {
+  const vendorDir = joinPath('system', vendor);
   const list = index[listKey];
   if (!Array.isArray(list)) throw new SystemIndexError(`${indexPath} has no "${listKey}" list.`);
   const out: SystemEntry[] = [];
@@ -332,7 +412,7 @@ function readList(
       continue;
     }
     seen.add(name);
-    out.push({ name, subPath, path: joinPath(vendorDir, subPath.replace(/\\/g, '/')) });
+    out.push({ name, subPath, path: joinPath(vendorDir, subPath.replace(/\\/g, '/')), vendor });
   }
   return out;
 }
@@ -395,9 +475,76 @@ async function readBody(
   };
   const settingId = str(json['setting_id']);
   if (settingId !== undefined) preset.settingId = settingId;
-  const cp = json['compatible_printers'];
-  if (Array.isArray(cp)) preset.compatiblePrinters = cp.filter((x) => typeof x === 'string');
+  const cp = strings(json['compatible_printers']);
+  if (cp) preset.compatiblePrinters = cp;
+  const prints = strings(json['compatible_prints']);
+  if (prints) preset.compatiblePrints = prints;
+  const optional = {
+    fileType: 'type',
+    compatiblePrintersCondition: 'compatible_printers_condition',
+    compatiblePrintsCondition: 'compatible_prints_condition',
+    printerModel: 'printer_model',
+    printerVariant: 'printer_variant',
+  } as const;
+  for (const [field, key] of Object.entries(optional) as [keyof typeof optional, string][]) {
+    const v = str(json[key]);
+    if (v !== undefined) preset[field] = v;
+  }
+  const renamed = str(json['renamed_from']);
+  if (renamed !== undefined && renamed.trim() !== '') preset.renamedFrom = splitEscaped(renamed);
+  const alias = str(json['alias']);
+  if (alias !== undefined && alias !== '') preset.alias = alias;
   return preset;
+}
+
+/**
+ * "a;b" -> ['a', 'b'], as Orca's unescape_strings_cstyle splits renamed_from
+ * (src/libslic3r/Config.cpp:173-242@v2.5.0, called at
+ * src/libslic3r/PresetBundle.cpp:8484-8488@v2.5.0): spaces and tabs before an item are skipped;
+ * a plain item runs up to the next ';' as written; a "quoted" item may hold ';' and backslash
+ * escapes (\n, \r, otherwise the next character). Empty items are dropped; a malformed tail is
+ * dropped too, keeping the items before it.
+ */
+export function splitEscaped(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
+    if (i >= text.length) break;
+    let item = '';
+    if (text[i] === '"') {
+      let closed = false;
+      for (i++; i < text.length; i++) {
+        let c = text[i]!;
+        if (c === '"') {
+          closed = true;
+          i++;
+          break;
+        }
+        if (c === '\\') {
+          if (++i >= text.length) break;
+          c = text[i]!;
+          c = c === 'r' ? '\r' : c === 'n' ? '\n' : c;
+        }
+        item += c;
+      }
+      if (!closed) break;
+      while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
+      if (i < text.length && text[i] !== ';') {
+        out.push(item);
+        break;
+      }
+    } else {
+      while (i < text.length && text[i] !== ';') item += text[i++];
+    }
+    out.push(item);
+    i++; // the ';'
+  }
+  return out.filter((s) => s !== '');
+}
+
+function strings(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined;
 }
 
 /**
@@ -455,42 +602,158 @@ function str(v: unknown): string | undefined {
  * any of them, so names resolve across all.
  *
  * BBL failing to load throws (as loadSystemIndex does); another vendor failing only adds a
- * warning. With BBL alone this returns the BBL index itself.
+ * warning. With BBL alone this returns the BBL index itself. This is the Bambu Studio case of
+ * loadVendorIndexes.
  */
 export async function loadSystemIndexes(
   fs: PresetFs,
   options: Omit<SystemIndexOptions, 'vendor'> = {},
 ): Promise<SystemIndex> {
-  const bbl = await loadSystemIndex(fs, options);
-  const extra: SystemIndex[] = [];
+  return loadVendorIndexes(fs, BAMBU, await listSystem(fs), options);
+}
+
+/** The listing of system/, or [] when it can't be listed. */
+async function listSystem(fs: PresetFs): Promise<DirEntry[]> {
+  try {
+    return await fs.list('system');
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * One list (options.listKey) of every vendor the profile loads, in its order. The required
+ * vendor failing throws; another vendor failing only adds a warning.
+ */
+async function loadVendorIndexes(
+  fs: PresetFs,
+  profile: SlicerProfile,
+  listing: readonly DirEntry[],
+  options: Omit<SystemIndexOptions, 'vendor'>,
+): Promise<SystemIndex> {
+  const plan = profile.vendorOrder(listing);
+  const parts: SystemIndex[] = [];
   const loadWarnings: string[] = [];
-  for (const vendor of await otherVendors(fs)) {
+  let base: SystemIndex | undefined;
+  for (const vendor of plan.json) {
     try {
-      extra.push(await loadSystemIndex(fs, { ...options, vendor }));
+      const part = await loadSystemIndex(fs, { ...options, vendor, ...(base ? { base } : {}) });
+      parts.push(part);
+      // The base vendor comes first in the plan, so every later one can inherit from it.
+      if (vendor === plan.base) base = part;
     } catch (err) {
-      if (!(err instanceof SystemIndexError)) throw err;
+      if (!(err instanceof SystemIndexError) || vendor === plan.required) throw err;
       loadWarnings.push(
         `${err.message} Presets based on ${vendor} system presets can't be checked.`,
       );
     }
   }
-  if (extra.length === 0 && loadWarnings.length === 0) return bbl;
-  return combineIndexes([bbl, ...extra], loadWarnings);
+  const [first] = parts;
+  if (first === undefined) {
+    // OrcaSlicer 2.5 may keep every vendor as a .opc file only: no index to read, but the
+    // presets are there (opc.ts). Parents are then checked by name only.
+    if (plan.opc.length > 0) return emptyIndex(plan.opc[0]!, loadWarnings);
+    throw new SystemIndexError('No system preset index was found.');
+  }
+  if (parts.length === 1 && loadWarnings.length === 0) return first;
+  return combineIndexes(parts, loadWarnings);
 }
 
-/** Vendor names with both system/<Vendor>.json and system/<Vendor>/, other than BBL. */
-async function otherVendors(fs: PresetFs): Promise<string[]> {
-  let listing;
-  try {
-    listing = await fs.list('system');
-  } catch {
-    return [];
+/** An index that lists nothing (every vendor is a .opc file). */
+function emptyIndex(vendor: string, warnings: string[]): SystemIndex {
+  const none = (): Promise<null> => Promise.resolve(null);
+  return {
+    vendor,
+    indexPath: joinPath('system', `${vendor}.opc`),
+    version: null,
+    warnings,
+    missing: [],
+    entries: new Map(),
+    has: () => false,
+    get: () => undefined,
+    names: () => [],
+    parsed: (name) => parsePresetName(name),
+    namesWithStem: () => [],
+    load: none,
+    loadAll: () => Promise.resolve([]),
+    findByStudioName: none,
+    effectiveCompatiblePrinters: none,
+    effectiveValue: none,
+    printerModel: none,
+    modelOf: none,
+  };
+}
+
+/** The system index of every preset type. */
+export interface SystemIndexSet {
+  /** null: that type's index could not be read; `errors` says why. */
+  byType: Record<PresetType, SystemIndex | null>;
+  /** Why an index could not be read. */
+  errors: Partial<Record<PresetType, SystemIndexError>>;
+  /** Profile version of the filament index (BBL.json's "version"), as systemVersion shows. */
+  version: string | null;
+  /** Every index's warnings, each once. Grows as bodies load. */
+  readonly warnings: string[];
+  /** The vendors the profile loads (system/<V>.json and system/<V>.opc), in load order. */
+  vendors: string[];
+  /** OrcaSlicer 2.5: vendors present only as a .opc file (opc.ts). Empty for Bambu Studio. */
+  opaque: OpaqueVendor[];
+  /** True when a readable .opc file holds this name (see opcHasString); false without any. */
+  opcHas(name: string): boolean;
+}
+
+/**
+ * Loads filament_list, process_list and machine_list of every vendor the profile loads. The
+ * filament index loads exactly as loadSystemIndexes does. A vendor without a process or machine
+ * list has none of those presets, which is not an error.
+ */
+export async function loadSystemIndexSet(
+  fs: PresetFs,
+  profile: SlicerProfile = BAMBU,
+): Promise<SystemIndexSet> {
+  const listing = await listSystem(fs);
+  const byType: Record<PresetType, SystemIndex | null> = {
+    filament: null,
+    process: null,
+    machine: null,
+  };
+  const errors: Partial<Record<PresetType, SystemIndexError>> = {};
+  for (const type of PRESET_TYPES) {
+    try {
+      byType[type] = await loadVendorIndexes(fs, profile, listing, {
+        listKey: LIST_KEY[type],
+        optionalList: type !== 'filament',
+      });
+    } catch (err) {
+      if (!(err instanceof SystemIndexError)) throw err;
+      errors[type] = err;
+    }
   }
-  const dirs = new Set(listing.filter((e) => e.kind === 'dir').map((e) => e.name.toLowerCase()));
-  return listing
-    .filter((e) => e.kind === 'file' && e.name.toLowerCase().endsWith('.json'))
-    .map((e) => e.name.slice(0, -'.json'.length))
-    .filter((v) => v.toLowerCase() !== 'bbl' && dirs.has(v.toLowerCase()));
+  const plan = profile.vendorOrder(listing);
+  const opaque: OpaqueVendor[] = [];
+  const bodies: Uint8Array[] = [];
+  for (const vendor of plan.opc) {
+    const path = joinPath('system', `${vendor}.opc`);
+    let read: ReturnType<typeof readOpc> = { ok: false };
+    try {
+      read = readOpc(await fs.readBytes(path));
+    } catch {
+      // Unreadable: counted as a .opc vendor, so no parent is called missing on its account.
+    }
+    opaque.push({ vendor, path, readable: read.ok });
+    if (read.ok) bodies.push(read.body);
+  }
+  return {
+    byType,
+    errors,
+    version: byType.filament?.version ?? null,
+    get warnings() {
+      return [...new Set(PRESET_TYPES.flatMap((t) => byType[t]?.warnings ?? []))];
+    },
+    vendors: [...plan.json, ...plan.opc],
+    opaque,
+    opcHas: (name) => bodies.some((b) => opcHasString(b, name)),
+  };
 }
 
 /** One SystemIndex over several vendors. Each name belongs to the first index that lists it. */
@@ -531,6 +794,7 @@ function combineIndexes(parts: SystemIndex[], loadWarnings: string[]): SystemInd
     findByStudioName: (name) => firstNonNull((p) => p.findByStudioName(name)),
     effectiveCompatiblePrinters: (name) =>
       owner(name)?.effectiveCompatiblePrinters(name) ?? Promise.resolve(null),
+    effectiveValue: (name, key) => owner(name)?.effectiveValue(name, key) ?? Promise.resolve(null),
     printerModel: (tag, code) => firstNonNull((p) => p.printerModel(tag, code)),
     modelOf: (pn) => firstNonNull((p) => p.modelOf(pn)),
   };
@@ -539,6 +803,12 @@ function combineIndexes(parts: SystemIndex[], loadWarnings: string[]): SystemInd
 /**
  * A system lookup for resolve.ts that answers with Studio's names (see findByStudioName) for
  * every parent these presets name. Other names fall back to the index names.
+ *
+ * A preset whose file says "instantiation": "false" (a template such as fdm_process_common, or
+ * "Generic PLA @base") is no parent: Studio keeps those only to build system presets from, never
+ * in the preset list a user preset's parent is looked up in
+ * (src/libslic3r/PresetBundle.cpp:6718-6728@v02.09.01.70). A body that can't be read still
+ * counts as present, so a read error never turns an existing parent into a missing one.
  */
 export async function studioNameLookup(
   system: SystemIndex,
@@ -548,7 +818,9 @@ export async function studioNameLookup(
   for (const p of presets) {
     const inherits = p.json?.['inherits'];
     if (typeof inherits !== 'string' || inherits === '' || known.has(inherits)) continue;
-    known.set(inherits, await system.findByStudioName(inherits));
+    const entry = await system.findByStudioName(inherits);
+    const body = entry ? await system.load(entry.name) : null;
+    known.set(inherits, entry && (body === null || body.instantiation) ? entry : null);
   }
   return {
     get: (name) => {

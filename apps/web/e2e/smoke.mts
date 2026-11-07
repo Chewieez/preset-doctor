@@ -177,6 +177,18 @@ try {
     console.log('  screenshot docs/screenshots/web.png');
   }
 
+  step("The guide switches to OrcaSlicer's folder and files");
+  {
+    const guide = page.locator('[data-testid=web-guide]');
+    await page.click('[data-testid=guide-slicer-orca]');
+    const text = (await guide.textContent()) ?? '';
+    assert.match(text, /%APPDATA%\\OrcaSlicer/);
+    assert.match(text, /OrcaSlicer\.conf/);
+    assert.doesNotMatch(text, /BambuStudio/);
+    await page.click('[data-testid=guide-slicer-bambu]');
+    assert.match((await guide.textContent()) ?? '', /BambuStudio\.conf/);
+  }
+
   step('Pick the copy, scan');
   await fillCopy(page, files);
   await page.click('[data-testid=guide-pick]');

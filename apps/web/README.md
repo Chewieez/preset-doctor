@@ -14,9 +14,12 @@ npm run web:e2e       # build, then the end-to-end smoke test in Edge or Chrome
 ## Why it works on a copy
 
 Chromium's File System Access API refuses every folder under `%APPDATA%`, so the user copies
-`system`, `user` and `BambuStudio.conf` into a normal folder, picks it here, and copies the
-changed files back. The guide on the page walks through that, and after a fix it lists exactly
-which files changed (relative to the BambuStudio folder).
+`system`, `user` and `BambuStudio.conf` (or, for OrcaSlicer, `system`, `user` and
+`OrcaSlicer.conf` from `%APPDATA%\OrcaSlicer`) into a normal folder, picks it here, and copies the
+changed files back. The guide on the page walks through that, with a switch for the OrcaSlicer
+steps, and after a fix it lists exactly which files changed (relative to the slicer's folder). The
+copy's files tell which slicer it is (`detectSlicer` in core); a whole `BambuStudio` or
+`OrcaSlicer` folder copied into the picked one is used as it is.
 
 ## Layout
 
@@ -27,7 +30,8 @@ which files changed (relative to the BambuStudio folder).
   ids, stale checks and one backup per session before the first write. Backups are core's zip
   backups in a `preset-doctor-backups` folder inside the picked folder, and can be downloaded.
   `studioStatus()` is always `unknown`; the UI asks the user to tick "I've closed Bambu Studio"
-  before Fix or Restore.
+  (or OrcaSlicer) before Fix or Restore. Backups record the slicer; one from the other slicer's
+  folder is never restored.
 - `src/fsaFs.ts`: core's `PresetFs` over a `FileSystemDirectoryHandle`. Writes use
   `createWritable()` (Chromium swaps the file in on close), then re-read and compare.
 - `src/handleStore.ts`: remembers the picked folder in IndexedDB. Permission is asked again on the

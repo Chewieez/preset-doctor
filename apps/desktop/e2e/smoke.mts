@@ -6,6 +6,13 @@
  * (the real Studio may well be open on this machine). With --screenshots (as
  * `npm run screenshots` passes it) it also rewrites the README screenshots in docs/screenshots.
  *
+ * A second part opens a temp copy of the unsupported-bambu fixture (several preset types and a
+ * conf that lists the added printers) and checks the printer checks (R2/R3) in the UI. Set
+ * PRESET_DOCTOR_E2E_SHOTS to a folder to save screenshots of that part there.
+ *
+ * A third part switches between a Bambu Studio and an OrcaSlicer folder (both temp copies) with the
+ * header's slicer switch.
+ *
  * Set PRESET_DOCTOR_E2E_KEEP=1 to keep the temp folder for inspection, and
  * PRESET_DOCTOR_E2E_EXE to a packaged exe (release/win-unpacked/Preset Doctor.exe) to test that
  * instead of the out/ build.
@@ -22,6 +29,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const appDir = join(here, '..');
 const repo = join(appDir, '..', '..');
 const fixture = join(repo, 'packages', 'core', 'src', '__fixtures__', 'broken-r1');
+const unsupportedFixture = join(
+  repo,
+  'packages',
+  'core',
+  'src',
+  '__fixtures__',
+  'unsupported-bambu',
+);
+const orcaFixture = join(repo, 'packages', 'core', 'src', '__fixtures__', 'orca');
+const extraShots = process.env.PRESET_DOCTOR_E2E_SHOTS;
 const shotsDir = join(repo, 'docs', 'screenshots');
 const writeShots = process.argv.includes('--screenshots');
 const packagedExe = process.env.PRESET_DOCTOR_E2E_EXE;
@@ -42,17 +59,22 @@ if (writeShots) await mkdir(shotsDir, { recursive: true });
 
 const launched: ElectronApplication[] = [];
 
-async function launch(studioRunning: '0' | '1'): Promise<ElectronApplication> {
+async function launch(
+  studioRunning: '0' | '1',
+  dir = root,
+  extraEnv: Record<string, string> = {},
+): Promise<ElectronApplication> {
   const app = await electron.launch({
     executablePath: electronPath,
     args: packagedExe ? [] : [appDir],
     cwd: appDir,
     env: {
       ...process.env,
-      PRESET_DOCTOR_ROOT: root,
+      PRESET_DOCTOR_ROOT: dir,
       PRESET_DOCTOR_BACKUPS: backups,
       PRESET_DOCTOR_FAKE_STUDIO_RUNNING: studioRunning,
       PRESET_DOCTOR_USER_DATA: join(work, 'user-data'),
+      ...extraEnv,
     },
   });
   launched.push(app);
@@ -196,6 +218,84 @@ try {
   assert.equal(restored, original);
 
   await app.close();
+
+  step('Printer checks: unsupported presets, the printers strip and the grouped note');
+  {
+    const dir = join(work, 'unsupported', 'BambuStudio');
+    await cp(unsupportedFixture, dir, { recursive: true });
+    const app = await launch('0', dir);
+    const page = await openWindow(app);
+    await scan(page);
+    const strip = await page.textContent('[data-testid=printers-line]');
+    assert.equal(
+      strip,
+      'Printers added in Bambu Studio: X2D (0.4, 0.6 mm) · P1S (0.4 mm) · 1 printer preset of ' +
+        'your own. Selected: X2D 0.4 nozzle.',
+    );
+    assert.equal(await page.isVisible('[data-testid=type-tabs]'), true, 'type tabs');
+    assert.match((await page.textContent('[data-testid=scan-summary]')) ?? '', /4 unsupported/);
+    // The filament tab opens first: it has rows that need attention.
+    assert.equal(await rowsWith(page, 'unsupported').count(), 2);
+    assert.equal(await row(page, 'Unknown Printer').locator('input[type=checkbox]').count(), 0);
+    await row(page, 'Unknown Printer').click();
+    const detail = page.locator('[data-testid=detail-panel]');
+    await detail.locator('.badge.status-unsupported', { hasText: 'Unsupported' }).waitFor();
+    await detail.locator('h3', { hasText: "Only for printers Studio doesn't know" }).waitFor();
+    await detail
+      .locator('[data-testid=printers-section]', { hasText: 'Bambu Lab Q9 0.4 nozzle' })
+      .waitFor();
+    assert.equal(await detail.locator('.candidates').count(), 0, 'no repair is offered');
+    if (extraShots) await page.screenshot({ path: join(extraShots, 'unsupported-filament.png') });
+
+    // "Show them" lists the presets the grouped note counts.
+    const note = page.locator('[data-testid=other-printer-note]');
+    await note.waitFor();
+    await note.locator('button:has-text("Show them")').click();
+    assert.deepEqual(await page.locator('[data-testid=preset-row] .name').allTextContents(), [
+      'Other Process',
+    ]);
+    await page.click('[data-testid=type-tab-process]');
+    assert.deepEqual(
+      (await page.locator('[data-testid=preset-row] .name').allTextContents()).sort(),
+      ['For My X2D', 'On P1S'],
+    );
+    await page.fill('input[type=search]', '');
+    await row(page, 'On X2D 08').click();
+    await detail.locator('h3', { hasText: "Made for a nozzle size you haven't added" }).waitFor();
+    if (extraShots) await page.screenshot({ path: join(extraShots, 'unsupported-process.png') });
+    await app.close();
+  }
+
+  step('Slicer switch: Bambu Studio and OrcaSlicer folders');
+  {
+    const orcaDir = join(work, 'switch', 'OrcaSlicer');
+    await cp(orcaFixture, orcaDir, { recursive: true });
+    const app = await launch('0', root, {
+      PRESET_DOCTOR_BAMBU_ROOT: root,
+      PRESET_DOCTOR_ORCA_ROOT: orcaDir,
+    });
+    const page = await openWindow(app);
+    const label = page.locator('.header .field-label').first();
+    await page.waitForSelector('[data-testid=slicer-orca]');
+    assert.equal(await label.textContent(), 'Bambu Studio folder');
+    await scan(page);
+
+    await page.click('[data-testid=slicer-orca]');
+    await page.locator('[data-testid=root-path]', { hasText: 'OrcaSlicer' }).waitFor();
+    await page.waitForSelector('[data-testid=scan-button]:has-text("Scan again"):not([disabled])');
+    assert.equal(await page.textContent('[data-testid=root-path]'), orcaDir);
+    assert.equal(await label.textContent(), 'OrcaSlicer folder');
+    assert.equal(await page.getAttribute('[data-testid=slicer-orca]', 'aria-pressed'), 'true');
+    assert.match((await page.textContent('[data-testid=scan-summary]')) ?? '', /3 hidden/);
+    assert.match((await page.textContent('[data-testid=studio-pill]')) ?? '', /OrcaSlicer/);
+    if (extraShots) await page.screenshot({ path: join(extraShots, 'orca.png') });
+
+    await page.click('[data-testid=slicer-bambu]');
+    await page.locator('[data-testid=root-path]', { hasText: 'BambuStudio' }).waitFor();
+    await page.waitForSelector('[data-testid=scan-summary]');
+    assert.equal(await label.textContent(), 'Bambu Studio folder');
+    await app.close();
+  }
   console.log('E2E smoke test passed.');
 } catch (err) {
   console.error('E2E smoke test FAILED:', err);
