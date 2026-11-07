@@ -1,7 +1,7 @@
 /**
- * One scan of a Bambu Studio folder for one account: reads the system indexes, the account's
- * presets of every type and BambuStudio.conf, runs every rule and summarizes each preset as a
- * table row. Only reads; never writes.
+ * One scan of a Bambu Studio or OrcaSlicer folder for one account: reads the system indexes, the
+ * account's presets of every type and the slicer's conf (BambuStudio.conf / OrcaSlicer.conf),
+ * runs every rule and summarizes each preset as a table row. Only reads; never writes.
  */
 import { compatSetup, effectiveCompat, judgeCompat, type CompatInputs } from './compat.js';
 import { readSlicerConf, type SlicerConf } from './conf.js';
@@ -10,7 +10,7 @@ import { buildUserIndex, chain, userInherits, type ResolveContext } from './reso
 import type { RuleContext } from './rules/context.js';
 import { orcaParentLookup } from './orcaLookup.js';
 import { checkR1, displayName, R1_ID, userCandidateNames } from './rules/r1.js';
-import { rewordFinding } from './rules/r1Common.js';
+import { rewordFinding, TEMPLATE_PARENT_TITLE } from './rules/r1Common.js';
 import {
   compatFinding,
   compatReason,
@@ -283,6 +283,7 @@ async function compatPass(args: {
     profile,
     machines: indexes.byType.machine,
     userMachines: presets.filter((p) => p.type === 'machine' && shown(p)),
+    hiddenUserMachines: presets.filter((p) => p.type === 'machine' && blocked.has(p)),
     resolve: resolves.get('machine'),
   });
   const details = new Map<UserPreset, CompatDetail>();
@@ -393,7 +394,9 @@ function reasonFor(f: Finding, inherits: string | undefined, profile: SlicerProf
   if (f.compat) return compatReason(f.compat, profile) ?? f.title;
   // Direct orphans name the missing parent; hidden children of orphans keep the title.
   if (f.ruleId === R1_ID && f.severity === 'error' && f.status === 'hidden' && inherits) {
-    return `Parent "${inherits}" is missing`;
+    return f.title === TEMPLATE_PARENT_TITLE
+      ? `Based on the template "${inherits}", not a preset`
+      : `Parent "${inherits}" is missing`;
   }
   return f.title;
 }

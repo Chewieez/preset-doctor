@@ -7,8 +7,9 @@
  * `npm run screenshots` passes it) it also rewrites the README screenshots in docs/screenshots.
  *
  * A second part opens a temp copy of the unsupported-bambu fixture (several preset types and a
- * conf that lists the added printers) and checks the printer checks (R2/R3) in the UI. Set
- * PRESET_DOCTOR_E2E_SHOTS to a folder to save screenshots of that part there.
+ * conf that lists the added printers) and checks the printer checks (R2/R3) in the UI; with
+ * --screenshots it also writes docs/screenshots/unsupported.png. Set PRESET_DOCTOR_E2E_SHOTS to a
+ * folder to save more screenshots of that part there.
  *
  * A third part switches between a Bambu Studio and an OrcaSlicer folder (both temp copies) with the
  * header's slicer switch.
@@ -245,6 +246,8 @@ try {
       .locator('[data-testid=printers-section]', { hasText: 'Bambu Lab Q9 0.4 nozzle' })
       .waitFor();
     assert.equal(await detail.locator('.candidates').count(), 0, 'no repair is offered');
+    // The README's v0.2 screenshot (the hero shots above come from broken-r1, which lists no printers).
+    await screenshot(page, 'unsupported.png');
     if (extraShots) await page.screenshot({ path: join(extraShots, 'unsupported-filament.png') });
 
     // "Show them" lists the presets the grouped note counts.

@@ -683,6 +683,37 @@ describe('R1 nozzle evidence', () => {
   });
 });
 
+describe('R1 parent existence, as Studio decides it', () => {
+  it('says "no longer exists" for an index name whose file carries another name', async () => {
+    // Profile 02.00.00.83 listed "SUNLU PETG @BBL A1M" for a file named "... 0.4 nozzle".
+    const fs = fakeStudio(
+      [
+        {
+          name: 'Sunny PETG @BBL A1M',
+          compatible_printers: ['Bambu Lab A1 mini 0.4 nozzle'],
+          setting_id: 'S1',
+          extra: { name: 'Sunny PETG @BBL A1M 0.4 nozzle' },
+        },
+      ],
+      [{ name: 'Mine', inherits: 'Sunny PETG @BBL A1M' }],
+    );
+    const [f] = await r1(fs);
+    expect(f?.title).toBe('Parent preset is missing');
+    expect(f?.explanation).toContain('which no longer exists');
+    expect(f?.explanation).not.toContain('internal template');
+  });
+
+  it('counts a listed system preset without an "instantiation" key as a parent', async () => {
+    const fs = fakeStudio(
+      [{ name: 'Keyless PLA @BBL X2D', extra: { instantiation: undefined } }],
+      [{ name: 'Mine', inherits: 'Keyless PLA @BBL X2D' }],
+    );
+    const raw = await fs.readText('system/BBL/filament/Keyless PLA @BBL X2D.json');
+    expect(raw).not.toContain('instantiation');
+    expect(await r1(fs)).toEqual([]);
+  });
+});
+
 // Read-only, on an in-memory copy of the real system presets:
 // npm run test:live -- r1 (same numbers as `node scripts/r1-simulate.ts`).
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live R1 simulation (read-only)', () => {

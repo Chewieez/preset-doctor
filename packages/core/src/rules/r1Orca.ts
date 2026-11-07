@@ -15,7 +15,7 @@
 import { userInherits } from '../resolve.js';
 import type { Finding, UserPreset } from '../types.js';
 import type { RuleContext } from './context.js';
-import { quoteCandidate } from './r1Common.js';
+import { namedByInfoText, preselectedByInfoText } from './r1Common.js';
 
 const UNCHECKED_TEXT = (name: string): string =>
   `OrcaSlicer 2.5 keeps its built-in presets in a packed format that Preset Doctor can't read ` +
@@ -119,13 +119,14 @@ export function orcaMissingFinding(f: Finding, missing: string, ctx: RuleContext
   if (f.proposedFix?.kind === 'setInherits') {
     const candidates = f.proposedFix.candidates.map((c) => ({ ...c, preselected: false }));
     out.proposedFix = { kind: 'setInherits', candidates };
-    // The shared texts may say a candidate "is pre-selected"; it no longer is.
+    // The shared texts may say a candidate "is pre-selected" (r1Common's preselectedByInfoText,
+    // reworded like the rest); it no longer is.
     const pre = f.proposedFix.candidates.find((c) => c.preselected);
     if (pre) {
-      out.explanation = out.explanation.replace(
-        `${quoteCandidate(pre)} is pre-selected because your preset's sync file (.info) names it`,
-        `${quoteCandidate(pre)} is the one your preset's sync file (.info) names`,
-      );
+      const reword = (t: string): string => (ctx.profile ? ctx.profile.reword(t) : t);
+      out.explanation = out.explanation
+        .split(reword(preselectedByInfoText(pre)))
+        .join(reword(namedByInfoText(pre)));
     }
   }
   return out;

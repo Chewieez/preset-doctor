@@ -24,6 +24,29 @@ before it is tagged.
 - A preset based on a system template that presets can't be based on (an `@base` filament or an
   `fdm_*` template, `"instantiation": "false"`) is now reported as hidden, as Studio hides it.
   Before, it showed as OK.
+- Printer and process suggestions are no longer cut to ten in alphabetical order, so your own
+  printer can always be picked; a printer named by its code (`Bambu Lab X1C 0.4 nozzle`) now lists
+  the model that code stands for (X1 Carbon) first.
+- A system preset whose file has no `instantiation` key counts as a real parent, as in Studio.
+  A parent the index lists under a file that carries another name is reported as no longer
+  existing, not as a template, and a template parent gets its own title and reason.
+- OrcaSlicer: when its filament library can't be read, parents are not checked (instead of all
+  being called missing); when another vendor can't be read, a parent that isn't found "could not
+  be checked". OrcaSlicer 2.2 and earlier find parents by their exact name only, so the renamed
+  and "Generic" fallbacks apply from 2.3 on. A restore skips a sync file when it can't tell
+  whether its preset is there.
+- Unsupported: the OrcaSlicer "Show unsupported presets" hint is given for filaments only (the
+  setting doesn't affect the process list); the vendor is checked before an empty printer list,
+  as in Studio; a preset made for one of your own printer presets that can't load points to that
+  printer's repair; a custom filament's name rule reaches the presets based on it; the detail
+  panel no longer says "every printer" when it can't tell.
+- Windows app: after switching to another folder or slicer, the next repair makes a fresh backup
+  (the other slicer may have changed files unseen); the Studio status follows the folder shown,
+  even when its scan failed; the slicer switch is pressed only on a default folder; before a scan,
+  the backups dialog lists every backup. The "incomplete results" banner names the preset types
+  whose system presets couldn't be read.
+- Command line: `--type printer` leaves out the note about filament and process presets, and
+  `backups restore` into a folder whose slicer can't be told checks that neither slicer runs.
 
 ### Added
 

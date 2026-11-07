@@ -4,7 +4,7 @@
  * r1Machine.ts.
  */
 import { presetName } from '../resolve.js';
-import type { SlicerProfile } from '../slicer.js';
+import { compareText, type SlicerProfile } from '../slicer.js';
 import type { SystemIndex } from '../systemIndex.js';
 import type { Candidate, Confidence, Finding, UserPreset } from '../types.js';
 
@@ -28,7 +28,7 @@ export function rewordFinding(f: Finding, profile: SlicerProfile): Finding {
   return out;
 }
 
-/** Other-printer candidates are rarely right; keep the list short enough to read. */
+/** Other-printer filament candidates are rarely right; keep the list short enough to read. */
 export const MAX_LOW_CANDIDATES = 10;
 
 export const CONFIDENCE_ORDER: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
@@ -46,9 +46,14 @@ export interface RankedCandidate {
 
 /**
  * Sorts by confidence, then sortKey, then system before user, then name; keeps every high and
- * medium candidate and at most MAX_LOW_CANDIDATES low ones.
+ * medium candidate and at most `maxLow` low ones. Printer and process lists pass Infinity: the
+ * user must pick from them, there are only about 14 printers per nozzle and 11 tags per profile,
+ * and an alphabetical cut can drop the right one (a printer renamed from a code such as X1C).
  */
-export function orderCandidates<T extends RankedCandidate>(ranked: T[]): T[] {
+export function orderCandidates<T extends RankedCandidate>(
+  ranked: T[],
+  maxLow = MAX_LOW_CANDIDATES,
+): T[] {
   ranked.sort(
     (a, b) =>
       CONFIDENCE_ORDER[a.candidate.confidence] - CONFIDENCE_ORDER[b.candidate.confidence] ||
@@ -58,7 +63,7 @@ export function orderCandidates<T extends RankedCandidate>(ranked: T[]): T[] {
   );
   return [
     ...ranked.filter((r) => r.candidate.confidence !== 'low'),
-    ...ranked.filter((r) => r.candidate.confidence === 'low').slice(0, MAX_LOW_CANDIDATES),
+    ...ranked.filter((r) => r.candidate.confidence === 'low').slice(0, maxLow),
   ];
 }
 
@@ -70,22 +75,53 @@ export function preselection<T extends RankedCandidate>(ranked: readonly T[]): T
   return named.length === 1 ? named[0] : undefined;
 }
 
+export const MISSING_PARENT_TITLE = 'Parent preset is missing';
+export const TEMPLATE_PARENT_TITLE = 'Parent is a template, not a preset';
+
+/** The title and the opening sentence of a direct orphan's finding. */
+export interface MissingParent {
+  /** Studio finds the parent, but its file says it is not instantiable (a template). */
+  template: boolean;
+  title: string;
+  intro: string;
+}
+
 /**
- * The opening sentence of an orphan's explanation. A parent that is in the index but not
+ * Why `missing` is no parent. A parent that Studio's name lookup finds but whose body is not
  * instantiable (a template such as fdm_process_common) exists, but Studio can't use it as a
- * parent (see studioNameLookup).
+ * parent (see studioNameLookup). Every other missing name no longer exists as far as Studio is
+ * concerned, including an index name whose file carries another name (systemIndex.ts).
  */
-export function missingIntro(missing: string, system: SystemIndex): string {
+export async function missingParent(missing: string, system: SystemIndex): Promise<MissingParent> {
   const where = system.version
     ? `in Bambu Studio's system presets (version ${system.version})`
     : "in Bambu Studio's system presets";
-  if (system.has(missing)) {
-    return (
-      `This preset is based on "${missing}", which is an internal template ${where} that ` +
-      "presets can't be based on, so Studio hides it."
-    );
+  const entry = await system.findByStudioName(missing);
+  const body = entry ? await system.load(entry.name) : null;
+  if (body !== null && !body.instantiation) {
+    return {
+      template: true,
+      title: TEMPLATE_PARENT_TITLE,
+      intro:
+        `This preset is based on "${missing}", which is an internal template ${where} that ` +
+        "presets can't be based on, so Studio hides it.",
+    };
   }
-  return `This preset is based on "${missing}", which no longer exists ${where}, so Studio hides it.`;
+  return {
+    template: false,
+    title: MISSING_PARENT_TITLE,
+    intro: `This preset is based on "${missing}", which no longer exists ${where}, so Studio hides it.`,
+  };
+}
+
+/** The base_id tie-break among several high candidates (see preselection), as explained. */
+export function preselectedByInfoText(c: Candidate): string {
+  return `${quoteCandidate(c)} is pre-selected because your preset's sync file (.info) names it`;
+}
+
+/** preselectedByInfoText for a candidate that ends up not pre-selected (r1Orca.ts). */
+export function namedByInfoText(c: Candidate): string {
+  return `${quoteCandidate(c)} is the one your preset's sync file (.info) names`;
 }
 
 /**
@@ -117,9 +153,7 @@ export function shortList(items: readonly string[], max = 3): string {
   return `${items.slice(0, max).join(', ')} and ${items.length - max} more`;
 }
 
-export function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
+export { compareText } from '../slicer.js';
 
 export function eqi(a: string | undefined, b: string | undefined): boolean {
   return (a ?? '').toLowerCase() === (b ?? '').toLowerCase();

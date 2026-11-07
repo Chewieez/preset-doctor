@@ -21,7 +21,7 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
   const t = tempFixture(fixture);
   cleanups.push(t.cleanup);
   const backupsDir = join(t.dir, '..', 'backups');
-  let running = false;
+  let running: boolean | ((slicer: string) => boolean) = false;
   let checkFails = false;
   let onCheck: (() => void) | undefined;
   const run = async (...argv: string[]): Promise<Run> => {
@@ -31,10 +31,10 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
       stdout: (s) => (out += s),
       stderr: (s) => (err += s),
       paths: { studioRoot: t.dir, orcaRoot: join(t.dir, 'no-orca'), backupsDir },
-      isStudioRunning: async () => {
+      isStudioRunning: async (profile) => {
         onCheck?.();
         if (checkFails) throw new Error('tasklist failed');
-        return running;
+        return typeof running === 'function' ? running(profile?.id ?? 'bambu') : running;
       },
       now: () => new Date(2026, 10, 5, 17, 30, 0),
     };
@@ -45,7 +45,7 @@ function setup(fixture: Parameters<typeof tempFixture>[0] = 'broken-r1') {
     root: t.dir,
     backupsDir,
     run,
-    setRunning: (v: boolean) => (running = v),
+    setRunning: (v: boolean | ((slicer: string) => boolean)) => (running = v),
     failCheck: () => (checkFails = true),
     /** Runs when the CLI checks for Studio: after planning, before any backup or write. */
     onStudioCheck: (fn: () => void) => (onCheck = fn),
@@ -306,6 +306,18 @@ describe('preset-doctor CLI', () => {
     );
   }, 20000);
 
+  it('backups restore: a folder of both slicers is refused while either one runs', async () => {
+    const s = setup();
+    expect((await s.run('fix', '--apply', '--yes')).code).toBe(EXIT.ok);
+    const repaired = s.read(PETG06);
+    writeFileSync(join(s.root, 'OrcaSlicer.conf'), '{"app":{}}');
+    s.setRunning((slicer) => slicer === 'orca');
+    const r = await s.run('backups', 'restore', '2026-11-05T17-30-00', s.root, '--yes');
+    expect(r.code).toBe(EXIT.refused);
+    expect(r.err).toContain('OrcaSlicer is running');
+    expect(s.read(PETG06)).toBe(repaired);
+  });
+
   it('backups: empty list, unknown subcommand, unknown id', async () => {
     const s = setup('healthy');
     expect((await s.run('backups', 'list')).out).toContain('No backups in');
@@ -419,6 +431,15 @@ describe('preset-doctor CLI with printer checks (R2/R3)', () => {
     expect(r.code).toBe(EXIT.ok);
     expect(r.out).toContain('Nothing to repair automatically.');
     expect(r.out).not.toContain('Not repaired automatically');
+  });
+
+  it('scan --type printer: leaves out the note about filament and process presets', async () => {
+    const { run } = setup('unsupported-bambu');
+    const r = await run('scan', '--type', 'printer');
+    expect(r.out).not.toContain("Some presets are for another printer you've added");
+    expect((await run('scan', '--type', 'process')).out).toContain(
+      "Note: Some presets are for another printer you've added.",
+    );
   });
 
   it('scan: prints nothing about printers when the conf lists none', async () => {

@@ -134,6 +134,40 @@ describe('effective compatibility through the parent chain', () => {
     expect(row(r, 'No At Sign').compat).toMatchObject({ state: 'all' });
   });
 
+  it("passes the name rule on to a custom filament's children that set no list", async () => {
+    const r = await scanWith([
+      { name: 'Root @Bambu Lab H2D 0.4 nozzle', base: true, extra: { compatible_printers: [] } },
+      fil('Child', 'Root @Bambu Lab H2D 0.4 nozzle'),
+      fil('Own Open', 'Root @Bambu Lab H2D 0.4 nozzle', { compatible_printers: [] }),
+    ]);
+    expect(row(r, 'Child').compat).toMatchObject({
+      state: 'printer-not-added',
+      printers: [H2D],
+      source: { kind: 'inherited', from: 'Root @Bambu Lab H2D 0.4 nozzle' },
+    });
+    // Its own empty list wins, as the child's file sets it.
+    expect(row(r, 'Own Open').compat).toMatchObject({ state: 'all', printers: [] });
+  });
+
+  it("sends a filament for one of the user's hidden printers to that printer's repair", async () => {
+    const r = await scanWith([
+      { type: 'machine', name: 'My Old X2D', inherits: 'Bambu Lab X2D 0.5 nozzle' },
+      fil('For Old X2D', 'Generic PLA @BBL X2D 0.4 nozzle', {
+        compatible_printers: ['My Old X2D'],
+      }),
+    ]);
+    expect(row(r, 'My Old X2D').status).toBe('hidden');
+    const f = r.findings.find((x) => x.presetName === 'For Old X2D' && x.ruleId === R2_ID);
+    expect(row(r, 'For Old X2D')).toMatchObject({
+      status: 'unsupported',
+      compat: { state: 'printer-hidden', hiddenPrinters: ['My Old X2D'] },
+      reason: 'Made for your printer preset "My Old X2D", which can\'t load',
+    });
+    expect(f?.explanation).toContain("which Studio can't load right now");
+    expect(f?.explanation).toContain('Repair that printer preset');
+    expect(f?.explanation).not.toContain('copy the settings');
+  });
+
   it('reports a condition without evaluating it', async () => {
     const r = await scanWith([
       fil('Cond', 'Generic PLA @BBL H2D', {
@@ -399,6 +433,33 @@ describe('judgeCompat (pure)', () => {
       'other-vendor',
     );
     expect(judgeCompat(eff([other.name], 'BBL'), 'filament', inputs(false)).state).toBe('selected');
+  });
+
+  it('checks the vendor before an empty list, as Studio does', () => {
+    const root: PrinterRef = { name: 'My Printer', vendor: null, isUser: true };
+    const bbl = ref('Bambu Lab X2D 0.4 nozzle', 'Bambu Lab X2D', '0.4', 'BBL');
+    const open = eff([], 'BBL');
+    const only = (selected: PrinterRef, enabled: PrinterRef[]): CompatInputs => ({
+      enabled,
+      selected,
+      knownPrinters: new Map(),
+      enabledModels: [],
+      vendorCheck: true,
+    });
+    expect(judgeCompat(open, 'filament', only(root, [root]))).toMatchObject({
+      state: 'other-vendor',
+      matchedPrinters: ['My Printer'],
+      vendor: 'BBL',
+    });
+    expect(judgeCompat(open, 'filament', only(root, [root, bbl]))).toMatchObject({
+      state: 'other-printer',
+      matchedPrinters: [bbl.name],
+    });
+    expect(judgeCompat(open, 'filament', only(bbl, [root, bbl])).state).toBe('all');
+    // OrcaSlicer: no vendor check.
+    expect(judgeCompat(open, 'filament', { ...only(root, [root]), vendorCheck: false }).state).toBe(
+      'all',
+    );
   });
 
   it('says it cannot tell for values it cannot read', () => {

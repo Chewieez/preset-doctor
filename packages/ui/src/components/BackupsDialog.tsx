@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { BackupInfo, Platform, StudioState } from '../contract';
 import { api, AppError, call, messageOf } from '../api';
-import { SLICER_TEXT } from '../model';
+import { backupFitsFolder, SLICER_TEXT } from '../model';
 import { useSlicer } from '../slicerContext';
 import { Dialog } from './Dialog';
 
@@ -10,6 +10,11 @@ interface Props {
   root: string;
   /** Web: the folder inside `root` that holds the backups. */
   backupsDir: string;
+  /**
+   * Whether the slicer of `root` is known (scanned, or a default folder). When it isn't, every
+   * backup is listed and can be picked; the restore itself refuses another slicer's backup.
+   */
+  slicerKnown: boolean;
   studio: StudioState | 'checking';
   /** Web: the "I've closed Bambu Studio" checkbox, which stands in for the process check. */
   studioGate?: ReactNode;
@@ -33,6 +38,7 @@ export function BackupsDialog({
   platform,
   root,
   backupsDir,
+  slicerKnown,
   studio,
   studioGate,
   onRestored,
@@ -74,7 +80,7 @@ export function BackupsDialog({
   };
 
   // listBackups reads a backup that doesn't say as Bambu Studio's.
-  const ofThisSlicer = (b: BackupInfo): boolean => b.slicer === slicer.id;
+  const ofThisSlicer = (b: BackupInfo): boolean => backupFitsFolder(b, slicer.id, slicerKnown);
   const otherCount = backups?.filter((b) => !ofThisSlicer(b)).length ?? 0;
   const shown = backups && (showAll ? backups : backups.filter(ofThisSlicer));
 
@@ -148,7 +154,7 @@ export function BackupsDialog({
                 <span className="muted">
                   {b.reason ? REASON[b.reason] : 'Backup'} · {b.fileCount} files ·{' '}
                   {formatBytes(b.bytes)}
-                  {!ofThisSlicer(b) && ` · ${SLICER_TEXT[b.slicer].name}`}
+                  {(!slicerKnown || !ofThisSlicer(b)) && ` · ${SLICER_TEXT[b.slicer].name}`}
                 </span>
                 <span className="muted backup-source">
                   From {b.sourceRoot ? <code>{b.sourceRoot}</code> : 'an unknown folder'}

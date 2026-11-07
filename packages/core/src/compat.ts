@@ -5,7 +5,8 @@
  *
  * What it mirrors (Bambu Studio v02.09.01.70, src/libslic3r/Preset.cpp):
  * - is_compatible_with_printer (:821-843): a preset with a vendor is incompatible with a printer
- *   of another vendor (:823-825); a condition counts only when the list is empty (:829-837); else
+ *   of another vendor (:823-825), before anything else is looked at; a condition counts only
+ *   when the list is empty (:829-837); else
  *   the list must be empty or name the printer (:838-840), or, for a user printer, its direct
  *   parent (:842, :811-819; "FIXME only check the parent");
  * - get_preset_with_vendor_profile (:2921-2933): the vendor is the nearest ancestor's;
@@ -34,6 +35,8 @@ export interface PrinterRef {
   isUser: boolean;
   /** User printers: their direct inherits (Studio checks one level only). */
   inherits?: string;
+  /** System printers: setting_id. */
+  settingId?: string;
 }
 
 export interface CompatInputs {
@@ -47,6 +50,11 @@ export interface CompatInputs {
   enabledModels: readonly EnabledModel[];
   /** profile.vendorCheck: Studio checks the vendor, OrcaSlicer doesn't. */
   vendorCheck: boolean;
+  /**
+   * File names of the account's printer presets that the slicer can't load (R1/R4 hidden or
+   * broken). A list naming one is for that printer, which a repair brings back.
+   */
+  hiddenUserPrinters?: ReadonlySet<string>;
 }
 
 /** A preset's compatibility values, as the slicer has them after loading. */
@@ -102,7 +110,8 @@ function ownValue(
  * (src/libslic3r/Preset.cpp:1521-1526@v02.09.01.70); Studio saves only the keys that differ
  * (:685-722). A custom filament with no parent and an empty list gets the part of its name after
  * "@" as its list, as Studio does at load (:1549-1559) and OrcaSlicer too
- * (src/libslic3r/Preset.cpp:1950-1959@v2.5.0). Returns null when the chain doesn't end at a root
+ * (src/libslic3r/Preset.cpp:1950-1959@v2.5.0); a user preset based on it that sets no list of
+ * its own inherits that list. Returns null when the chain doesn't end at a root
  * (R1 reports those).
  */
 export async function effectiveCompat(
@@ -150,15 +159,21 @@ export async function effectiveCompat(
             from: from === 'system' ? (sys!.entry.currentName ?? sys!.name) : from.fileStem,
           };
 
+  // The root of a chain without system presets: a custom filament. Studio loads it first (base/)
+  // and rewrites its empty list at load, so its children inherit the rewritten list
+  // (:1520-1524), unless one of them sets its own.
+  const root = sys ? undefined : users[users.length - 1];
   if (
     preset.type === 'filament' &&
-    userInherits(preset) === '' &&
+    root !== undefined &&
+    userInherits(root) === '' &&
+    (from === undefined || from === root) &&
     (printers === null || printers.length === 0)
   ) {
-    const at = preset.fileStem.indexOf('@');
-    if (at >= 0 && at + 1 < preset.fileStem.length) {
-      printers = [preset.fileStem.slice(at + 1)];
-      source = { kind: 'name' };
+    const at = root.fileStem.indexOf('@');
+    if (at >= 0 && at + 1 < root.fileStem.length) {
+      printers = [root.fileStem.slice(at + 1)];
+      source = root === preset ? { kind: 'name' } : { kind: 'inherited', from: root.fileStem };
     }
   }
   const eff: EffectiveCompat = {
@@ -188,6 +203,7 @@ export async function systemPrinters(machines: SystemIndex): Promise<PrinterRef[
     if (!body.instantiation || body.fileType !== 'machine' || seen.has(body.studioName)) continue;
     seen.add(body.studioName);
     const ref: PrinterRef = { name: body.studioName, vendor: body.vendor, isUser: false };
+    if (body.settingId !== undefined) ref.settingId = body.settingId;
     const model = await machines.effectiveValue(body.name, 'printerModel');
     if (model !== null) ref.model = model;
     const nozzle = await machines.effectiveValue(body.name, 'printerVariant');
@@ -264,16 +280,30 @@ export function judgeCompat(
   const list = eff.printers ?? [];
   const base = { printers: [...list], source: eff.source };
   if (eff.opaque) return { ...base, state: 'cant-tell', why: 'opaque' };
-  if (list.length === 0) {
-    if (eff.printersCondition.trim() !== '')
-      return { ...base, state: 'cant-tell', why: 'condition' };
-    return withProcess({ ...base, state: 'all' }, eff, type, inputs);
-  }
 
+  // The vendor test comes first in Studio, before the list or the condition (:823-825).
   const sameVendor = (x: PrinterRef): boolean =>
     !inputs.vendorCheck || eff.vendor === null || x.vendor === eff.vendor;
   const fitting = inputs.enabled.filter(sameVendor);
   const S = inputs.selected;
+  if (list.length === 0) {
+    if (fitting.length === 0 && inputs.enabled.length > 0) {
+      const out: CompatDetail = {
+        ...base,
+        state: 'other-vendor',
+        matchedPrinters: inputs.enabled.map((x) => x.name),
+      };
+      if (eff.vendor !== null) out.vendor = eff.vendor;
+      return out;
+    }
+    if (eff.printersCondition.trim() !== '')
+      return { ...base, state: 'cant-tell', why: 'condition' };
+    if (S && !sameVendor(S) && fitting.length > 0) {
+      return { ...base, state: 'other-printer', matchedPrinters: fitting.map((x) => x.name) };
+    }
+    return withProcess({ ...base, state: 'all' }, eff, type, inputs);
+  }
+
   if (S && sameVendor(S) && matches(list, S)) {
     return withProcess({ ...base, state: 'selected' }, eff, type, inputs);
   }
@@ -291,6 +321,10 @@ export function judgeCompat(
     if (eff.vendor !== null) out.vendor = eff.vendor;
     return out;
   }
+
+  // Made for one of the account's own printers that can't load now: repairing it is the fix.
+  const hidden = list.filter((n) => inputs.hiddenUserPrinters?.has(n) === true);
+  if (hidden.length > 0) return { ...base, state: 'printer-hidden', hiddenPrinters: hidden };
 
   // Map each entry to a model and nozzle: from the profile, or else from the name.
   const mapped = list.map((name): MappedEntry => {
@@ -374,7 +408,8 @@ export function isUnsupported(detail: CompatDetail): boolean {
     detail.state === 'nozzle-not-added' ||
     detail.state === 'printer-not-added' ||
     detail.state === 'unknown-printers' ||
-    detail.state === 'other-vendor'
+    detail.state === 'other-vendor' ||
+    detail.state === 'printer-hidden'
   );
 }
 
@@ -402,6 +437,8 @@ export async function compatSetup(args: {
   profile: SlicerProfile;
   machines: SystemIndex | null;
   userMachines: readonly UserPreset[];
+  /** The account's printer presets the slicer can't load (hidden or broken). */
+  hiddenUserMachines?: readonly UserPreset[];
   resolve: ResolveContext | undefined;
 }): Promise<CompatSetup> {
   const { conf, profile, machines } = args;
@@ -440,6 +477,8 @@ export async function compatSetup(args: {
   };
   if (selected) inputs.selected = selected;
   if (conf.selectedProcess !== undefined) inputs.selectedProcess = conf.selectedProcess;
+  const hidden = (args.hiddenUserMachines ?? []).map((p) => p.fileStem);
+  if (hidden.length > 0) inputs.hiddenUserPrinters = new Set(hidden);
   const context: CompatContext = {
     checked: true,
     enabled: enabledModels.map((m) => ({ ...m, nozzles: [...m.nozzles] })),

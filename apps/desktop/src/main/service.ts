@@ -67,6 +67,11 @@ export interface ServiceDeps {
 export class DoctorService {
   private readonly allowedRoots = new Map<string, string>();
   private lastScan: { root: string; result: ScanResult } | null = null;
+  /**
+   * The folder the UI shows: the one last asked to be scanned (even if that scan failed) or
+   * picked. studioStatus watches its slicer.
+   */
+  private shownRoot: string | null = null;
   /** Previews, keyed to the Studio folder they were planned for. */
   private readonly plans = new PlanStore<string>();
   private readonly sessions = new Map<string, BackupSession>();
@@ -100,6 +105,7 @@ export class DoctorService {
     // Nothing may target the previous folder after a folder change, even if the next scan fails.
     this.lastScan = null;
     this.plans.clear();
+    this.show(nodePath.resolve(root));
     return root;
   }
 
@@ -126,6 +132,8 @@ export class DoctorService {
         root = orca.root;
         rootExists = true;
       }
+      // The folder the UI starts on, until it scans or picks one.
+      if (this.shownRoot === null) this.shownRoot = nodePath.resolve(root);
       return {
         root,
         rootExists,
@@ -143,6 +151,7 @@ export class DoctorService {
     return run(async () => {
       const dir = this.checkRoot(root);
       if (userId !== undefined && typeof userId !== 'string') throw invalid('Bad account id.');
+      this.show(dir);
       if (!(await isDir(dir))) {
         throw new Refusal('scan-failed', `The folder ${dir} does not exist.`);
       }
@@ -253,9 +262,12 @@ export class DoctorService {
     });
   }
 
+  /** The state of the slicer of the folder the UI shows (shownRoot), which labels the pill. */
   studioStatus(): Promise<IpcResult<StudioState>> {
     return run(
-      async () => (await this.studioState(this.lastScan?.root ?? this.deps.config.root)).state,
+      async () =>
+        (await this.studioState(this.shownRoot ?? this.lastScan?.root ?? this.deps.config.root))
+          .state,
     );
   }
 
@@ -331,6 +343,18 @@ export class DoctorService {
       );
     }
     return slicer?.id ?? 'bambu';
+  }
+
+  /**
+   * Records the folder the UI shows. On a change, every backup session is dropped: the poll only
+   * watches the shown folder's slicer, so the other slicer may run (and change its files) unseen.
+   * A session is then only reused for a folder whose slicer was watched since its backup.
+   */
+  private show(dir: string): void {
+    if (this.shownRoot === null || rootKey(this.shownRoot) !== rootKey(dir)) {
+      this.sessions.clear();
+    }
+    this.shownRoot = dir;
   }
 
   private sessionFor(root: string, slicer: SlicerId): BackupSession {

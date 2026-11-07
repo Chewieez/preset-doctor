@@ -138,6 +138,29 @@ describe('R1 for process presets', () => {
     expect(f).toMatchObject({ presetType: 'process', status: 'hidden' });
   });
 
+  it('reports a template parent with its own title and table reason', async () => {
+    const result = await scan(fakeStudio(PROCESSES, [userProc('fdm_process_common')]));
+    const f = result.findings.find((x) => x.ruleId === R1_ID);
+    expect(f?.title).toBe('Parent is a template, not a preset');
+    expect(result.presets[0]?.reason).toBe(
+      'Based on the template "fdm_process_common", not a preset',
+    );
+  });
+
+  it('lists every tag of the same profile, none cut alphabetically', async () => {
+    const tags = ['A1', 'A1M', 'A2L', 'H2C', 'H2D', 'H2S', 'P1P', 'P1S', 'P2S', 'X1C', 'X2D'];
+    const system = [
+      PROCESSES[0]!,
+      ...tags.map((t, i) =>
+        proc(`0.20mm Standard @BBL ${t}`, [`Bambu Lab ${t} 0.4 nozzle`], `GP2${i}`),
+      ),
+    ];
+    const [f] = await r1(fakeStudio(system, [userProc('0.20mm Standard @BBL N1')]));
+    const names = candidates(f).map((c) => c.name);
+    expect(names).toHaveLength(tags.length);
+    expect(names).toContain('0.20mm Standard @BBL X2D');
+  });
+
   it('leaves a process whose parent exists alone', async () => {
     expect(await r1(fakeStudio(PROCESSES, [userProc('0.20mm Standard @BBL X1C')]))).toEqual([]);
   });
@@ -191,6 +214,43 @@ describe('R1 for printer presets', () => {
     const [f] = await r1(fakeStudio(MACHINES, [userMachine('Bambu Lab X1 Carbon 0.2 nozzle')]));
     expect(summary(candidates(f))).toContain('medium Bambu Lab X1 Carbon 0.4 nozzle');
     expect(candidates(f).every((c) => !c.preselected)).toBe(true);
+  });
+
+  it('offers the printer a code-like name stands for first, and every printer of the nozzle', async () => {
+    const models = [
+      'A1',
+      'A1 mini',
+      'A2L',
+      'H2C',
+      'H2D',
+      'H2D Pro',
+      'H2S',
+      'P1P',
+      'P1S',
+      'P2S',
+      'X1',
+      'X1 Carbon',
+      'X1E',
+      'X2D',
+    ];
+    const system = [
+      MACHINES[0]!,
+      ...models.map((m, i) =>
+        machine(`Bambu Lab ${m} 0.4 nozzle`, `Bambu Lab ${m}`, '0.4', `GM1${i}`),
+      ),
+    ];
+    const [f] = await r1(fakeStudio(system, [userMachine('Bambu Lab X1C 0.4 nozzle')]));
+    const cs = candidates(f);
+    expect(summary(cs)[0]).toBe('medium Bambu Lab X1 Carbon 0.4 nozzle');
+    expect(cs[0]?.reason).toBe(
+      'Probably the same printer: "X1C" is short for the Bambu Lab X1 Carbon.',
+    );
+    expect(cs).toHaveLength(models.length);
+    expect(cs.every((c) => !c.preselected)).toBe(true);
+    // A code that abbreviates nothing still lists every printer of that nozzle.
+    const [g] = await r1(fakeStudio(system, [userMachine('Bambu Lab X3 0.4 nozzle')]));
+    expect(candidates(g).map((c) => c.name)).toContain('Bambu Lab X2D 0.4 nozzle');
+    expect(candidates(g)).toHaveLength(models.length);
   });
 
   it('raises the printer the .info base_id names, still without pre-selecting', async () => {

@@ -9,6 +9,12 @@
  *   (src/slic3r/GUI/PresetComboBoxes.cpp:1717-1729, 1851@v02.09.01.70);
  * - processes have no such group: an incompatible process is left out of the list unless it is
  *   the selected one (src/slic3r/GUI/PresetComboBoxes.cpp:2126-2135@v02.09.01.70).
+ *
+ * OrcaSlicer 2.4+ hides the "Unsupported presets" group unless Preferences > Developer > "Show
+ * unsupported presets" is on. That setting only reaches the printer and filament lists
+ * (PlaterPresetComboBox, src/slic3r/GUI/PresetComboBoxes.cpp:1505-1507@v2.5.0, and its help text,
+ * src/slic3r/GUI/Preferences.cpp:2355@v2.5.0); the process list leaves an incompatible process
+ * out either way (TabPresetComboBox, PresetComboBoxes.cpp:1763@v2.5.0).
  */
 import type { SlicerProfile } from '../slicer.js';
 import { TERMS } from '../terms.js';
@@ -33,15 +39,17 @@ const NAMES_SHOWN = 3;
 
 /** Where the slicer shows (or doesn't show) a preset that isn't for any added printer. */
 function where(type: PresetType, profile: SlicerProfile, context: CompatContext): string {
+  // The process list has no "Unsupported presets" group, and no setting adds one.
+  if (type !== 'filament') {
+    return `doesn't offer it in the ${TERMS[type].list} for any printer you've added`;
+  }
   if (context.unsupportedGroup === 'hidden-by-setting') {
     return (
       `doesn't show it in the list at all for any printer you've added (${profile.displayName} ` +
       'hides unsupported presets unless Preferences > Developer > "Show unsupported presets" is on)'
     );
   }
-  return type === 'filament'
-    ? 'lists it under "Unsupported presets" (greyed out) for every printer you\'ve added'
-    : `doesn't offer it in the ${TERMS[type].list} for any printer you've added`;
+  return 'lists it under "Unsupported presets" (greyed out) for every printer you\'ve added';
 }
 
 function sourceText(detail: CompatDetail, profile: SlicerProfile): string {
@@ -123,6 +131,24 @@ export function compatFinding(
             'copy the settings over.',
         ),
       };
+    case 'printer-hidden': {
+      const names = detail.hiddenPrinters ?? [];
+      const one = names.length === 1;
+      return {
+        ...base,
+        ruleId: R2_ID,
+        title: "Made for a printer preset of yours that can't load",
+        explanation: join(
+          intro,
+          `It is made for your printer preset${one ? '' : 's'} ` +
+            `${shortList(quoted(names), NAMES_SHOWN)}, which ${short} can't load right now.`,
+          source,
+          `Repair ${one ? 'that printer preset' : 'those printer presets'} (Preset Doctor ` +
+            `lists ${one ? 'it' : 'them'} with your printer presets), and this ` +
+            `${TERMS[type].noun} shows again.`,
+        ),
+      };
+    }
     case 'other-vendor': {
       const vendor = detail.vendor ?? 'another vendor';
       return {
@@ -176,6 +202,8 @@ export function compatReason(detail: CompatDetail, profile: SlicerProfile): stri
       return `Lists printers ${profile.shortName} doesn't know`;
     case 'other-vendor':
       return "Made for another brand's printer profile";
+    case 'printer-hidden':
+      return `Made for your printer preset "${detail.hiddenPrinters?.[0] ?? ''}", which can't load`;
     default:
       return undefined;
   }

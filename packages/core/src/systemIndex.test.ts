@@ -6,6 +6,7 @@ import { nodeFs } from './node/nodeFs.js';
 import {
   LIST_KEY,
   SystemIndexError,
+  instantiable,
   loadSystemIndex,
   loadSystemIndexes,
   loadSystemIndexSet,
@@ -406,6 +407,20 @@ describe('loadSystemIndex edge cases', () => {
     const index = await loadSystemIndex(fs, { vendor: 'Acme', listKey: 'process_list' });
     expect(index.version).toBeNull();
     expect((await index.load('P'))?.path).toBe('system/Acme/process/P.json');
+  });
+});
+
+describe('instantiable', () => {
+  it('follows Studio: only an explicit false, or a key-less include, is no preset', () => {
+    expect(instantiable('true', 'A')).toBe(true);
+    expect(instantiable(true, 'A')).toBe(true);
+    expect(instantiable('false', 'A')).toBe(false);
+    expect(instantiable(false, 'A')).toBe(false);
+    // No key: a real preset, unless it is a pure include (no name, or a g-code file).
+    expect(instantiable(undefined, 'Generic PLA @BBL X2D')).toBe(true);
+    expect(instantiable('', 'Generic PLA @BBL X2D')).toBe(true);
+    expect(instantiable(undefined, '')).toBe(false);
+    expect(instantiable(undefined, 'machine_start_gcode_x1')).toBe(false);
   });
 });
 

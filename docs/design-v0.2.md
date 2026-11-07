@@ -482,7 +482,8 @@ include at least one.
 | low | same `layer` and `profile`, other printers | "Same profile, but for <printers>." This covers code renames (H2 to H2S, N10 to H3C, N1 to A1M), where the old tag no longer exists. |
 | low | same `tag` and nozzle, other `layer` | "Same printer, <layer> mm layers instead of <old>." Sorted by distance from the old layer height. |
 
-At most 10 candidates are low. Sorting uses today's comparator in `r1.ts`: confidence, then
+Low candidates are not capped for processes (about 11 tags per profile): an alphabetical cut
+dropped the right tag (`@BBL X2D` for an orphaned `@BBL N1`). Sorting uses today's comparator in `r1.ts`: confidence, then
 sortKey, then system before user, then name. Pre-selection is also today's rule: a single high
 candidate, or among several high ones, the one whose `setting_id` is `base_id`.
 
@@ -517,7 +518,8 @@ The user must therefore **always pick**. `preselected` is always `false`.
 | high | effective `printerModel` equals the parsed model (case-insensitive) and `printerVariant` equals the parsed nozzle (`sameNozzle`) | "Bambu's current preset for the <model> with a <d> mm nozzle." |
 | medium | same model, other nozzle | "Same printer, but the <d> mm nozzle. The nozzle changes the print settings, so only pick this if that's the nozzle you have." Sorted by nozzle distance. |
 | medium | `setting_id` equals the orphan's `base_id` | "Your preset's sync file (.info) says it was made from this printer." |
-| low | same nozzle, other model, same vendor | "A different printer: <model>." At most 10, sorted by how many words the model name shares with the old one. |
+| medium | same nozzle, and the missing model's last word is a printer code (it has a digit) that abbreviates the candidate's model (`modelMatchesCode`: `Bambu Lab X1C` for the X1 Carbon) | "Probably the same printer: "<code>" is short for the <model>." |
+| low | same nozzle, other model, same vendor | "A different printer: <model>." Not capped (about 14 printers per nozzle; the user must be able to pick theirs), sorted by how many words the model name shares with the old one. |
 
 Explanation suffix (always added):
 
@@ -797,28 +799,37 @@ That matches what the loader does (`libslic3r/Preset.cpp:1521-1526@v02.09.01.70`
 L becomes `[name.slice(name.indexOf('@') + 1)]` (first `@`, untrimmed) when that is non-empty.
 Studio does the same at load and writes it back to the file
 (`libslic3r/Preset.cpp:1549-1559@v02.09.01.70`), and so does Orca
-(`libslic3r/Preset.cpp:1950-1959@v2.5.0`). Source `name`.
+(`libslic3r/Preset.cpp:1950-1959@v2.5.0`). Source `name`. A user filament based on such a root
+(no system preset in its chain) that sets no `L` of its own, or whose `L` comes from the root's
+own `[]`, inherits the rewritten list, because Studio loads base/ first and children copy the
+root's config (`libslic3r/Preset.cpp:1520-1524@v02.09.01.70`). Source `inherited` from the root.
 
 **`judgeCompat(P, type, inputs)` returns a `CompatVerdict`.** The steps run in order:
 
 1. If `opaque`, the verdict is **`cant-tell`**.
-2. If `L` is empty and `C` is empty, the verdict is **`all`**. Filaments then go on to step 8.
-3. If `L` is empty and `C` is not, the verdict is **`cant-tell`**. Studio evaluates `C`, and
-   Preset Doctor never guesses (`libslic3r/Preset.cpp:829-837@v02.09.01.70`). Live BBL and Orca
-   profiles have no conditions at all.
-4. **The vendor filter** applies when `vendorCheck` is on and `P.vendor !== null`. A printer
-   whose `vendor !== P.vendor` is incompatible
+2. **The vendor filter** applies when `vendorCheck` is on and `P.vendor !== null`. A printer
+   whose `vendor !== P.vendor` is incompatible, before Studio looks at the list or the condition
    (`libslic3r/Preset.cpp:823-825@v02.09.01.70`). Let E′ be E without those printers.
-   - If E′ is empty and E isn't, the verdict is **`other-vendor`**.
+   - If `L` is empty, E′ is empty and E isn't, the verdict is **`other-vendor`** (for a
+     non-empty `L`, step 7 decides it).
    - So a BBL-based filament on a wizard printer (vendor null) is incompatible. That is why the
      wizard makes its own copies (`libslic3r/Preset.cpp:2560-2616@v02.09.01.70`).
    - Orca has no vendor check (`libslic3r/Preset.cpp:904-907, 942-945@v2.5.0`).
+3. If `L` is empty and `C` is not, the verdict is **`cant-tell`**. Studio evaluates `C`, and
+   Preset Doctor never guesses (`libslic3r/Preset.cpp:829-837@v02.09.01.70`). Live BBL and Orca
+   profiles have no conditions at all.
+4. If `L` is empty and `C` is empty: when S fails step 2 but E′ isn't empty, the verdict is
+   **`other-printer`** with E′ as `matchedPrinters`; otherwise it is **`all`**. Filaments then
+   go on to step 8 after `all`.
 5. `matches(x)` means L contains `x.name`, or `x.isUser` and L contains `x.inherits`
-   (`libslic3r/Preset.cpp:811-819, 838-842@v02.09.01.70`). If S passes step 4 and
+   (`libslic3r/Preset.cpp:811-819, 838-842@v02.09.01.70`). If S passes step 2 and
    `matches(S)`, the verdict is **`selected`**. Filaments then go on to step 8.
 6. If some x in E′ has `matches(x)`, the verdict is **`other-printer`**, with
    `matchedPrinters`. This is the grouped R3b.
-7. Otherwise, map each entry of L through `knownPrinters`. An entry that isn't there falls back to
+7. If an added printer outside E′ matches, the verdict is **`other-vendor`**. If an entry of L
+   is the file name of one of the account's printer presets that R1/R4 hide or break, the
+   verdict is **`printer-hidden`** (R2): repairing that printer brings the preset back.
+   Otherwise, map each entry of L through `knownPrinters`. An entry that isn't there falls back to
    `parseCompatiblePrinter` and is marked `guessed: true`.
    - a. If some entry's model is an enabled model (`enabledModels` with the same vendor and
      model) but the entry's nozzle isn't in its `nozzles`, the verdict is
@@ -1167,7 +1178,10 @@ works like this:
   case-insensitively, each with its `system/<V>/` folder;
 - `opc`: every `<V>.opc` with no `<V>.json`;
 - `base`: `'OrcaFilamentLibrary'`;
-- `required`: nothing.
+- `required`: `'OrcaFilamentLibrary'` when its `.json` is listed (it plays BBL's part: a
+  failed library stops that type's parent check, as BBL does for Bambu). Any other vendor that
+  fails is named in `SystemIndexSet.failedVendors`, and the lookup then reports missing parents
+  of that type as "could not be checked" (`orca.unchecked`), never as hidden.
 
 If system/ has no vendor at all, that is a `SystemIndexError`, handled as today.
 
@@ -1254,6 +1268,10 @@ How a scan uses it:
 3. only when the name contains `Generic`, the rewrite
    `^(?:.*?\b(?:\w+_)?)(Generic)\b\s+([^@]+?)\s*(?:@.*)?$` to `Generic $2 @System`, followed by
    steps 1-2 again;
+
+   Steps 2 and 3 exist from 2.3.0 (`find_preset2`). Orca 2.2 and earlier look the parent up by
+   its exact name only (`libslic3r/Preset.cpp:1146@v2.2.0`), so for a `slicerVersion` below 2.3
+   only step 1 (and step 4, which is 2.5-only anyway) applies. An unknown version gets all steps.
 4. **bundles (2.5):** names `_local/<id>/<bare>` and `_subscribed/<id>/<bare>`
    (`libslic3r/Preset.cpp:106-131@v2.5.0`) exist when
    `user/<acct>/<_local|_subscribed>/<id>/<type>/[base/]<bare>.json` exists. Bundles load before
@@ -1435,7 +1453,7 @@ Where the code differs from §6.1 to §6.8, §7 and §8, this list is the contra
 |---|---|
 | S1 | Only the types that come through from core change (`PresetSummary.type`, and so on). |
 | S2 | Only the types that come through change (`compat`, `'unsupported'`). |
-| S3 | `AppConfig.slicers: { id: SlicerId; displayName: string; root: string; exists: boolean }[]`. `root` and `rootExists` stay: they are the folder to scan first, Bambu when it exists, otherwise Orca. Add `IpcErrorCode 'other-slicer'`. `RestorePayload` gets `skipped` through `RestoreResult`. `studioStatus()` keeps its signature and reports the slicer of the last scanned root (the UI reads `scan.slicer` for the label). |
+| S3 | `AppConfig.slicers: { id: SlicerId; displayName: string; root: string; exists: boolean }[]`. `root` and `rootExists` stay: they are the folder to scan first, Bambu when it exists, otherwise Orca. Add `IpcErrorCode 'other-slicer'`. `RestorePayload` gets `skipped` through `RestoreResult`. `studioStatus()` keeps its signature and reports the slicer of the root the UI shows: the one last asked to be scanned (even when that scan failed) or picked (the UI reads `scan.slicer` for the label). Showing another root drops every backup session, because only the shown root's slicer is watched. |
 
 No new IPC channel is needed. `scan(root)` with the other slicer's root is the slicer switch.
 That root must be on the desktop allow-list, which now holds both default roots.

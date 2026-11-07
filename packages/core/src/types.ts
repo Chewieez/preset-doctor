@@ -179,7 +179,9 @@ export interface ScanResult {
  * - 'nozzle-not-added': for an added printer, but only with a nozzle size that isn't added (R3);
  * - 'printer-not-added': only for printers that aren't added (R2);
  * - 'unknown-printers': only for printer names no profile defines (R2);
- * - 'other-vendor': the added printers that fit its list use another vendor profile (R2).
+ * - 'other-vendor': the added printers that fit its list use another vendor profile (R2);
+ * - 'printer-hidden': for one of the account's own printer presets, which the slicer can't load
+ *   now (R1/R4 hide it); repairing that printer brings it back (R2).
  */
 export type CompatState =
   | 'all'
@@ -189,7 +191,8 @@ export type CompatState =
   | 'nozzle-not-added'
   | 'printer-not-added'
   | 'unknown-printers'
-  | 'other-vendor';
+  | 'other-vendor'
+  | 'printer-hidden';
 
 /** Where a preset's printer list (compatible_printers) comes from. */
 export type CompatSource =
@@ -215,6 +218,8 @@ export interface CompatDetail {
   model?: string;
   nozzles?: string[];
   addedNozzles?: string[];
+  /** 'printer-hidden': the account's own printer presets the list names that can't load now. */
+  hiddenPrinters?: string[];
   /** 'other-vendor': the vendor profile the preset is based on. */
   vendor?: string;
   /** Filament against the selected process: only for other processes, or a condition. */

@@ -126,7 +126,12 @@ export const ORCA: SlicerProfile = {
       json: library === undefined ? others : [library, ...others],
       opc: stems('.opc').filter((v) => !lower.has(v.toLowerCase())),
     };
-    if (library !== undefined) plan.base = library;
+    if (library !== undefined) {
+      // The library plays BBL's part: every vendor builds on it, and it holds the "Generic ...
+      // @System" presets. If it can't be read, no parent of that type can be checked.
+      plan.base = library;
+      plan.required = library;
+    }
     return plan;
   },
   parentLookup: 'orca',
@@ -189,7 +194,8 @@ export function parseVersion(v: string | null): { major: number; minor: number }
   return m ? { major: Number(m[1]), minor: Number(m[2]) } : null;
 }
 
-function compareText(a: string, b: string): number {
+/** Plain code-unit order, the same on every machine (no locale). */
+export function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 

@@ -445,6 +445,44 @@ describe('DoctorService with OrcaSlicer', () => {
     expect(await service().adoptFolder(join(orcaRoot, 'system'))).toBe(orcaRoot);
   });
 
+  it('makes a fresh backup after showing the other slicer, which may have run unseen', async () => {
+    const s = service();
+    const first = ok(await s.scan(root, undefined));
+    const a = ok(await s.apply(ok(await s.plan(first.defaults.slice(0, 1), {})).planId));
+    expect(a.backupIsNew).toBe(true);
+
+    // On the OrcaSlicer folder, only orca-slicer.exe is watched: Bambu Studio runs unseen.
+    ok(await s.scan(orcaRoot, undefined));
+    running = ['bambu'];
+    expect(ok(await s.studioStatus())).toBe('closed');
+    running = [];
+    // Studio changed a preset meanwhile.
+    const edited = join(root, ...ORPHAN.split('/'));
+    await writeFile(
+      edited,
+      (await readFile(edited, 'utf8')).replace('"from"', '"from_studio": "x", "from"'),
+    );
+
+    const again = ok(await s.scan(root, undefined));
+    const b = ok(await s.apply(ok(await s.plan(again.defaults, {})).planId));
+    expect(b.backupIsNew).toBe(true);
+    expect(b.backup.id).not.toBe(a.backup.id);
+  });
+
+  it("watches the shown folder's slicer, even when its scan failed", async () => {
+    const s = service();
+    ok(await s.scan(root, undefined));
+    const broken = join(work, 'OrcaOnlyConf');
+    await mkdir(broken, { recursive: true });
+    await writeFile(join(broken, 'OrcaSlicer.conf'), '{"app":{}}');
+    const picked = await s.adoptFolder(broken);
+    expect(errCode(await s.scan(picked, undefined))).toBe('scan-failed');
+    running = ['orca'];
+    expect(ok(await s.studioStatus())).toBe('running');
+    running = ['bambu'];
+    expect(ok(await s.studioStatus())).toBe('closed');
+  });
+
   it('starts on the OrcaSlicer folder when there is no Bambu Studio folder', async () => {
     const s = new DoctorService({
       config: {

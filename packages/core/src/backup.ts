@@ -442,7 +442,7 @@ async function restoreOrder(
     if (
       loneInfoIsCloudDelete &&
       !inBackup.has(json.toLowerCase()) &&
-      !(await existsOrUnknown(srcFs, json))
+      !(await existsOrAbsent(srcFs, json))
     ) {
       skipped.push(p);
       continue;
@@ -452,12 +452,16 @@ async function restoreOrder(
   return { order, skipped };
 }
 
-/** exists(), where an error counts as "there": a doubt never makes a restore skip a file. */
-async function existsOrUnknown(fs: PresetFs, path: string): Promise<boolean> {
+/**
+ * exists(), where an error counts as "not there". Only used for OrcaSlicer's sync files: a doubt
+ * skips the .info, because a lone .info makes OrcaSlicer delete that preset in the cloud
+ * (CloudDeleteQueue.cpp:128-168@v2.5.0), while a skipped one costs at most a new upload.
+ */
+async function existsOrAbsent(fs: PresetFs, path: string): Promise<boolean> {
   try {
     return await fs.exists(path);
   } catch {
-    return true;
+    return false;
   }
 }
 

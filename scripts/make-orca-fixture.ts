@@ -277,7 +277,7 @@ const USERS: UserSpec[] = [
     keysFrom: { vendor: 'Custom', name: 'Generic ABS @MyToolChanger' },
     sync: '',
     expect:
-      'R1 note "Parent found under its new name": `Generic ABS @MyToolChanger`, not pre-selected',
+      'R1 note "Parent found under its new name": `Generic ABS @MyToolChanger`, not pre-selected; R2: only for the MyToolChanger printers (status Unsupported)',
   },
   {
     account: 'default',

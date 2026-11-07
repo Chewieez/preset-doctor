@@ -49,9 +49,10 @@ import type { RuleContext } from './context.js';
 import {
   eqi,
   joinList,
-  missingIntro,
+  missingParent,
   nameFieldNote,
   orderCandidates,
+  preselectedByInfoText,
   preselection,
   quoteCandidate,
   shortList,
@@ -94,14 +95,15 @@ export async function processOrphanFinding(
   const pool = await processPool(preset, ctx);
   const target = await describeTarget(missing, preset, pool);
   const ranked = rank(target, pool);
+  const why = await missingParent(missing, ctx.system);
   const finding: Finding = {
     ruleId: RULE_IDS.orphanedParent,
     severity: 'error',
     presetPath: preset.path,
     presetName: name,
     status: 'hidden',
-    title: 'Parent preset is missing',
-    explanation: explain(target, ranked, ctx) + nameFieldNote(missing, ctx.presets),
+    title: why.title,
+    explanation: explain(target, ranked, why.intro) + nameFieldNote(missing, ctx.presets),
   };
   if (ranked.length > 0) {
     finding.proposedFix = { kind: 'setInherits', candidates: ranked.map((r) => r.candidate) };
@@ -314,7 +316,7 @@ function rank(target: Target, pool: readonly Pooled[]): Ranked[] {
     }
   }
 
-  const out = orderCandidates(ranked);
+  const out = orderCandidates(ranked, Infinity);
   const pick = preselection(out);
   if (pick) pick.candidate.preselected = true;
   return out;
@@ -334,8 +336,7 @@ function samePrinter(a: string, b: string): boolean {
 
 const PRINTERS_NOTE = 'The new parent decides which printers Studio offers this process for';
 
-function explain(target: Target, ranked: Ranked[], ctx: RuleContext): string {
-  const intro = missingIntro(target.missing, ctx.system);
+function explain(target: Target, ranked: Ranked[], intro: string): string {
   const high = ranked.filter((r) => r.candidate.confidence === 'high');
   const pick = ranked.find((r) => r.candidate.preselected);
   const printers = pick?.candidate.printers;
@@ -352,7 +353,7 @@ function explain(target: Target, ranked: Ranked[], ctx: RuleContext): string {
   if (high.length > 1) {
     const named = preselection(ranked);
     if (named) {
-      return `${intro} ${high.length} presets look like good replacements; ${quoteCandidate(named.candidate)} is pre-selected because your preset's sync file (.info) names it.${note}`;
+      return `${intro} ${high.length} presets look like good replacements; ${preselectedByInfoText(named.candidate)}.${note}`;
     }
     return `${intro} ${high.length} presets look like good replacements; pick the one for your printer and nozzle.${note}`;
   }

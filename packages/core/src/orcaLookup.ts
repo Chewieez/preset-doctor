@@ -13,6 +13,10 @@
  *   3. only for a name containing "Generic": the name rewritten to "Generic <material> @System",
  *      then steps 1 and 2 again.
  *
+ * Steps 2 and 3 arrived in OrcaSlicer 2.3.0 (find_preset2). Up to 2.2 the user loader looks the
+ * parent up by its exact name only (find_preset, src/libslic3r/Preset.cpp:1146@v2.2.0), so
+ * there step 1 is all; an unknown version gets the 2.5 lookup.
+ *
  * Two more ways a parent can exist that Preset Doctor can't look into: a bundle preset of Orca 2.5
  * ("_local/<id>/<name>" or "_subscribed/<id>/<name>", src/libslic3r/Preset.cpp:106-131@v2.5.0,
  * loaded before plain presets, src/libslic3r/PresetBundle.cpp:1445-1520@v2.5.0), and a name in a
@@ -64,8 +68,8 @@ const BUNDLE_RE = /^(_local|_subscribed)\/([^/\\]+)\/(.+)$/;
 
 /**
  * The parent lookup for one preset type of one account, answering every parent name these
- * presets use. `userNames` are the file names of the account's presets of this type: a name that
- * is one of them is the user's own preset, which Orca finds by its exact name before any fallback.
+ * presets use. A name that is the file name of one of `presets` is the user's own preset, which
+ * Orca finds by its exact name before any fallback.
  */
 export async function orcaParentLookup(args: {
   system: SystemIndex;
@@ -74,13 +78,14 @@ export async function orcaParentLookup(args: {
   accountId: string;
   type: PresetType;
   presets: readonly UserPreset[];
-  /** The OrcaSlicer version (renames are followed one step before 2.5). */
+  /** The OrcaSlicer version (no fallbacks before 2.3, renames one step before 2.5). */
   version: string | null;
 }): Promise<OrcaLookup> {
   const { system, set, fs, accountId, type, presets } = args;
   const userNames = new Set(presets.map((p) => p.fileStem));
   const v = parseVersion(args.version);
   const recursive = v === null || v.major > 2 || (v.major === 2 && v.minor >= 5);
+  const fallbacks = v === null || v.major > 2 || (v.major === 2 && v.minor >= 3);
 
   const exactCache = new Map<string, Promise<SystemEntry | null>>();
   const exact = (name: string): Promise<SystemEntry | null> => {
@@ -112,9 +117,12 @@ export async function orcaParentLookup(args: {
     })());
 
   /** Steps 1 and 2 (find_preset). */
-  const findPreset = async (name: string): Promise<ParentResolution | undefined> => {
+  const findPreset = async (
+    name: string,
+  ): Promise<Extract<ParentResolution, { via: 'exact' | 'renamed' }> | undefined> => {
     const hit = await exact(name);
     if (hit) return { via: 'exact', entry: hit };
+    if (!fallbacks) return undefined;
     const map = await renameMap();
     const chain = [name];
     let current = name;
@@ -153,13 +161,11 @@ export async function orcaParentLookup(args: {
     const opc = set.opaque.find((o) => o.readable);
     if (opc && set.opcHas(name))
       return { via: 'opc', entry: opaqueEntry(name, opc.path, opc.vendor) };
-    if (name.includes('Generic')) {
+    if (fallbacks && name.includes('Generic')) {
       const rewritten = genericFallbackName(name);
       if (rewritten !== name) {
         const found = await findPreset(rewritten);
-        if (found && found.via !== 'opc' && found.via !== 'bundle') {
-          return { via: 'generic', entry: found.entry, rewritten };
-        }
+        if (found) return { via: 'generic', entry: found.entry, rewritten };
         if (opc && set.opcHas(rewritten)) {
           return { via: 'opc', entry: opaqueEntry(rewritten, opc.path, opc.vendor) };
         }
@@ -188,7 +194,9 @@ export async function orcaParentLookup(args: {
         : hit.entry;
     },
     resolution: (name) => known.get(name) ?? undefined,
-    unchecked: set.opaque.length > 0,
+    // A vendor whose index failed to load may still hold the parent (Orca may even load it from
+    // its .opc cache), so a name that isn't found can't be called missing either.
+    unchecked: set.opaque.length > 0 || (set.failedVendors[type]?.length ?? 0) > 0,
     vendors: set.vendors,
   };
 }

@@ -43,7 +43,7 @@ use fake `PFUS`/`PPUS`/`PMUS` ids; `user_id` is empty for `default` (logged out)
 |---|---|---|
 | user/default/filament/Lib Child.json | `Generic PLA @System` | ok (library parent) |
 | user/default/filament/Toolchanger Child.json | `Generic PLA @MyToolChanger` | loads (a Custom parent that inherits the library); R2: only for the MyToolChanger printers |
-| user/default/filament/Renamed.json | `My Generic ABS @MyToolChanger` | R1 note "Parent found under its new name": `Generic ABS @MyToolChanger`, not pre-selected |
+| user/default/filament/Renamed.json | `My Generic ABS @MyToolChanger` | R1 note "Parent found under its new name": `Generic ABS @MyToolChanger`, not pre-selected; R2: only for the MyToolChanger printers (status Unsupported) |
 | user/default/filament/Generic Fallback.json (no sidecar) | `Generic PLA @Elegoo Nonexistent` | R1 note "OrcaSlicer substitutes a generic parent" (`Generic PLA @System`) |
 | user/default/filament/Case Only.json | `elegoo pla @ECC` | R1 hidden; `Elegoo PLA @ECC` high and pre-selected |
 | user/default/filament/Brand Off.json (no sidecar) | `Creality Hyper PLA @Creality K1` | R1 hidden, with the "printer brand turned off" hint; nothing pre-selected |

@@ -72,6 +72,19 @@ export function slicerOfRoot(
   return slicers.find((s) => norm(s.root) === norm(root))?.id;
 }
 
+/**
+ * Whether a backup may be restored into the shown folder. Only once the folder's slicer is known
+ * (`slicerKnown`: scanned, or a default folder); before that every backup is offered, and the
+ * restore itself refuses another slicer's backup ('other-slicer').
+ */
+export function backupFitsFolder(
+  backup: { slicer: SlicerId },
+  slicer: SlicerId,
+  slicerKnown: boolean,
+): boolean {
+  return !slicerKnown || backup.slicer === slicer;
+}
+
 /** The tab order, as in core's PRESET_TYPES. */
 export const PRESET_TYPE_ORDER = [
   'filament',
@@ -248,6 +261,26 @@ export function visiblePresets(
     );
 }
 
+/** The preset types whose system index could not be read, in tab order. */
+export function unreadIndexTypes(scan: ScanResult): PresetType[] {
+  return PRESET_TYPE_ORDER.filter((t) => !scan.indexesRead[t]);
+}
+
+/**
+ * The "incomplete" banner's sentence after its bold lead, when only some types' system presets
+ * could not be read (null when all or none: the banner then keeps its general wording).
+ */
+export function partialIndexText(unread: readonly PresetType[], slicer: string): string | null {
+  if (unread.length === 0 || unread.length === PRESET_TYPE_ORDER.length) return null;
+  const words = unread.map((t) => TYPE_TERMS[t].tab.toLowerCase());
+  const list =
+    words.length === 1 ? words[0]! : `${words.slice(0, -1).join(', ')} and ${words.at(-1)!}`;
+  return (
+    `Preset Doctor couldn't read ${slicer}'s system ${list} presets, so your ${list} presets ` +
+    "weren't checked against them. Everything else was checked."
+  );
+}
+
 export function countByType(scan: ScanResult): Record<PresetType, number> {
   const counts: Record<PresetType, number> = { filament: 0, process: 0, machine: 0 };
   for (const p of scan.presets) counts[typeOf(p)]++;
@@ -344,11 +377,17 @@ function skipReason(compat: CompatContext, slicer: string): string {
 /** Plain words for the printer list in the detail panel. */
 export function compatLines(c: CompatDetail, slicer: string): string[] {
   const lines: string[] = [];
-  lines.push(
-    c.printers.length === 0
-      ? 'Offered for: every printer.'
-      : `Offered for: ${c.printers.join(', ')}.`,
-  );
+  if (c.printers.length > 0) {
+    lines.push(`Offered for: ${c.printers.join(', ')}.`);
+  } else if (c.state === 'all' || c.state === 'selected') {
+    lines.push('Offered for: every printer.');
+  } else if (c.state === 'other-printer' || c.state === 'other-vendor') {
+    // No list, but the slicer offers it only for printers of its own brand profile.
+    lines.push(
+      `Offered for: every printer of the ${c.vendor !== undefined ? `${c.vendor} ` : ''}brand profile it is based on.`,
+    );
+  }
+  // 'cant-tell' with no list: the lines below say why Preset Doctor can't tell.
   switch (c.source.kind) {
     case 'own':
       lines.push('This list is in the preset itself.');

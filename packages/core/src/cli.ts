@@ -36,6 +36,7 @@ import {
   BAMBU,
   detectSlicer,
   ORCA,
+  SLICERS,
   slicerById,
   slicerFolder,
   type SlicerProfile,
@@ -279,9 +280,13 @@ function rootArg(rest: string[], d: CliDeps, args: Args): string {
 
 /**
  * The slicer of the folder, read from its files. With --slicer, a folder of the other slicer is a
- * usage error. A folder that can't be told apart counts as --slicer's, or Bambu Studio's.
+ * usage error. A folder that can't be told apart counts as --slicer's, or Bambu Studio's, with
+ * `detected` false: a write then checks that no slicer at all is running.
  */
-async function folderSlicer(root: string, args: Args): Promise<SlicerProfile> {
+async function folderSlicer(
+  root: string,
+  args: Args,
+): Promise<{ profile: SlicerProfile; detected: boolean }> {
   const detected = await detectSlicer(nodeFs(root, { readOnly: true }));
   if (detected.ok && args.slicer !== undefined && detected.profile.id !== args.slicer) {
     throw new UsageError(
@@ -289,8 +294,8 @@ async function folderSlicer(root: string, args: Args): Promise<SlicerProfile> {
         `(${detected.evidence})`,
     );
   }
-  if (detected.ok) return detected.profile;
-  return slicerById(args.slicer ?? 'bambu');
+  if (detected.ok) return { profile: detected.profile, detected: true };
+  return { profile: slicerById(args.slicer ?? 'bambu'), detected: false };
 }
 
 async function runScan(root: string, args: Args): Promise<ScanResult> {
@@ -343,7 +348,7 @@ const GROUPS: { status: PresetStatus; label: string }[] = [
 ];
 
 function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
-  printHeader(r, out);
+  printHeader(r, args, out);
   const profile = slicerById(r.slicer);
   const byPath = new Map<string, Finding[]>();
   for (const f of r.findings) {
@@ -393,7 +398,7 @@ function printScan(r: ScanResult, args: Args, out: (l?: string) => void): void {
   }
 }
 
-function printHeader(r: ScanResult, out: (l?: string) => void): void {
+function printHeader(r: ScanResult, args: Args, out: (l?: string) => void): void {
   out(`Preset Doctor ${VERSION}`);
   out(`Folder:  ${r.root}`);
   // Bambu Studio output stays as it was before OrcaSlicer was supported.
@@ -409,7 +414,11 @@ function printHeader(r: ScanResult, out: (l?: string) => void): void {
         : ''),
   );
   if (r.compat.checked) out(`Printers: ${printersLine(r)}`);
-  for (const f of r.findings.filter((x) => x.ruleId === R5_ID || x.ruleId === R3_NOTE_ID)) {
+  // The R3 note is about filament and process presets only.
+  const r3Shown = selected(args, { type: 'filament' }) || selected(args, { type: 'process' });
+  for (const f of r.findings.filter(
+    (x) => x.ruleId === R5_ID || (x.ruleId === R3_NOTE_ID && r3Shown),
+  )) {
     out();
     out(`Note: ${f.title}. ${f.explanation}`);
   }
@@ -461,7 +470,7 @@ async function fixCommand(
   const readFs = nodeFs(root, { readOnly: true });
   const changes = await planFixes(readFs, result, choices, { updateBaseId: !args.noBaseId });
 
-  printHeader(result, out);
+  printHeader(result, args, out);
   const unfixable = result.findings.filter(
     (f) =>
       (f.status === 'hidden' || f.status === 'broken') &&
@@ -498,7 +507,7 @@ async function fixCommand(
   }
   if (!args.yes) throw new UsageError('Add --yes to confirm that these files should be changed.');
 
-  if (!(await studioClosed(d, err, profile))) return EXIT.refused;
+  if (!(await studioClosed(d, err, [profile]))) return EXIT.refused;
 
   const writeFs = nodeFs(root);
   // Before the backup: a planned file that is gone since the scan is stale, not "not backed up".
@@ -547,21 +556,29 @@ async function fixCommand(
   return EXIT.ok;
 }
 
+/** True when none of these slicers is running; otherwise says which one is (or can't be checked). */
 async function studioClosed(
   d: CliDeps,
   err: (l: string) => void,
-  profile: SlicerProfile,
+  profiles: readonly SlicerProfile[],
 ): Promise<boolean> {
-  const name = profile.displayName;
-  let running: boolean;
-  try {
-    running = await d.isStudioRunning(profile);
-  } catch (e) {
-    err(`Could not check whether ${name} is running (${errorMessage(e)}), so nothing was changed.`);
-    return false;
+  for (const profile of profiles) {
+    const name = profile.displayName;
+    let running: boolean;
+    try {
+      running = await d.isStudioRunning(profile);
+    } catch (e) {
+      err(
+        `Could not check whether ${name} is running (${errorMessage(e)}), so nothing was changed.`,
+      );
+      return false;
+    }
+    if (running) {
+      err(`${name} is running. Close it and run this again; nothing was changed.`);
+      return false;
+    }
   }
-  if (running) err(`${name} is running. Close it and run this again; nothing was changed.`);
-  return !running;
+  return true;
 }
 
 async function backupsCommand(
@@ -604,8 +621,9 @@ async function backupsCommand(
     const root = rootArg(folder, d, args);
     if (!args.yes)
       throw new UsageError('Add --yes to confirm that the user folder should be replaced.');
-    const profile = await folderSlicer(root, args);
-    if (!(await studioClosed(d, err, profile))) return EXIT.refused;
+    // A folder whose slicer can't be told (both confs, or neither) may belong to either one.
+    const { profile, detected } = await folderSlicer(root, args);
+    if (!(await studioClosed(d, err, detected ? [profile] : SLICERS))) return EXIT.refused;
     let result;
     try {
       result = await restoreBackup(nodeFs(root), destFs, id, {

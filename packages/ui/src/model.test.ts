@@ -1,6 +1,15 @@
-import type { Finding, PresetSummary, ScanResult } from '@preset-doctor/core';
+import {
+  BAMBU,
+  ORCA,
+  PRESET_TYPES,
+  TERMS,
+  type Finding,
+  type PresetSummary,
+  type ScanResult,
+} from '@preset-doctor/core';
 import { describe, expect, it } from 'vitest';
 import {
+  backupFitsFolder,
   choiceFor,
   compatLines,
   COMPAT_OTHER_QUERY,
@@ -15,12 +24,18 @@ import {
   isProblem,
   mergePaths,
   orderFindings,
+  partialIndexText,
+  PRESET_TYPE_ORDER,
   presetTabs,
   printersText,
   problemsByType,
   repairNotice,
   restoreNotice,
   selectedChoices,
+  SLICER_TEXT,
+  slicerOfRoot,
+  TYPE_TERMS,
+  unreadIndexTypes,
   visiblePresets,
   windowsPath,
 } from './model';
@@ -341,5 +356,85 @@ describe('printer checks (R2/R3)', () => {
       'This list comes from "Generic PLA @BBL P1S", the preset it is based on.',
       'Bambu Studio shows it when you select Bambu Lab P1S 0.4 nozzle.',
     ]);
+  });
+
+  it("never says 'every printer' when it can't tell", () => {
+    const opaque = compatLines(
+      { state: 'cant-tell', why: 'opaque', printers: [], source: { kind: 'default' } },
+      'OrcaSlicer',
+    );
+    expect(opaque.join(' ')).not.toContain('every printer');
+    expect(opaque.join(' ')).toContain("can't tell which printers it is for");
+    const rule = compatLines(
+      { state: 'cant-tell', why: 'condition', printers: [], source: { kind: 'own' } },
+      'OrcaSlicer',
+    );
+    expect(rule.join(' ')).not.toContain('every printer');
+    expect(rule.join(' ')).toContain("Preset Doctor can't evaluate it");
+    expect(
+      compatLines({ state: 'all', printers: [], source: { kind: 'own' } }, 'Bambu Studio')[0],
+    ).toBe('Offered for: every printer.');
+    expect(
+      compatLines(
+        { state: 'other-vendor', vendor: 'BBL', printers: [], source: { kind: 'own' } },
+        'Bambu Studio',
+      )[0],
+    ).toBe('Offered for: every printer of the BBL brand profile it is based on.');
+  });
+});
+
+describe("the UI's copies of core values", () => {
+  it('match core (model.ts imports only types from core)', () => {
+    expect([...PRESET_TYPE_ORDER]).toEqual([...PRESET_TYPES]);
+    for (const t of PRESET_TYPES) {
+      expect(TYPE_TERMS[t]).toEqual({
+        tab: TERMS[t].tab,
+        noun: TERMS[t].noun,
+        baseTag: TERMS[t].baseTag,
+      });
+    }
+    expect(SLICER_TEXT.bambu.name).toBe(BAMBU.displayName);
+    expect(SLICER_TEXT.orca.name).toBe(ORCA.displayName);
+    expect(SLICER_TEXT.bambu.conf).toBe(BAMBU.confFile);
+    expect(SLICER_TEXT.orca.conf).toBe(ORCA.confFile);
+    expect(SLICER_TEXT.bambu.dirName).toBe(BAMBU.rootDirName);
+    expect(SLICER_TEXT.orca.dirName).toBe(ORCA.rootDirName);
+  });
+});
+
+describe('the incomplete-results banner', () => {
+  it('names only the types whose system presets could not be read', () => {
+    const scan = { indexesRead: { filament: true, process: false, machine: true } } as ScanResult;
+    expect(unreadIndexTypes(scan)).toEqual(['process']);
+    expect(partialIndexText(['process'], 'Bambu Studio')).toBe(
+      "Preset Doctor couldn't read Bambu Studio's system process presets, so your process " +
+        "presets weren't checked against them. Everything else was checked.",
+    );
+    expect(partialIndexText(['process', 'machine'], 'OrcaSlicer')).toContain(
+      'system process and printer presets',
+    );
+    expect(partialIndexText([], 'Bambu Studio')).toBeNull();
+    expect(partialIndexText(['filament', 'process', 'machine'], 'Bambu Studio')).toBeNull();
+  });
+});
+
+describe('slicer of the shown folder', () => {
+  const slicers = [
+    { id: 'bambu' as const, root: 'C:\\Users\\you\\AppData\\Roaming\\BambuStudio' },
+    { id: 'orca' as const, root: 'C:\\Users\\you\\AppData\\Roaming\\OrcaSlicer' },
+  ];
+
+  it('is known only for a default folder: a picked copy presses no slicer switch', () => {
+    expect(slicerOfRoot(slicers, 'c:\\users\\you\\appdata\\roaming\\orcaslicer\\')).toBe('orca');
+    expect(slicerOfRoot(slicers, 'D:\\OrcaCopy')).toBeUndefined();
+    expect(slicerOfRoot([], 'PresetDoctor-copy')).toBeUndefined();
+  });
+
+  it('offers every backup for restore until the slicer is known', () => {
+    const orcaBackup = { slicer: 'orca' as const };
+    // Web after a reload: no scan yet, and the fallback slicer is Bambu Studio.
+    expect(backupFitsFolder(orcaBackup, 'bambu', false)).toBe(true);
+    expect(backupFitsFolder(orcaBackup, 'bambu', true)).toBe(false);
+    expect(backupFitsFolder(orcaBackup, 'orca', true)).toBe(true);
   });
 });

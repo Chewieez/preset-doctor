@@ -52,8 +52,9 @@ export function readSlicerConf(fs: PresetFs, profile: SlicerProfile): Promise<Sl
 }
 
 /**
- * Reads BambuStudio.conf. Never throws: the file may be missing, huge, mid-write by Studio,
- * or followed by the "# MD5 checksum ..." line Studio appends after the JSON
+ * Reads BambuStudio.conf, or with `path` any slicer's conf (OrcaSlicer.conf too; the Studio
+ * names are kept for existing imports). Never throws: the file may be missing, huge, mid-write
+ * by Studio, or followed by the "# MD5 checksum ..." line Studio appends after the JSON
  * (src/libslic3r/AppConfig.cpp:575-578@v02.09.01.70).
  */
 export async function readStudioConf(

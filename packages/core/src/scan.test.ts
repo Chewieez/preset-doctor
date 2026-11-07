@@ -293,21 +293,49 @@ describe('scan on fixtures', () => {
   });
 });
 
-/** types-bambu: file -> [type, status, pre-selected candidate or null], from the fixture README. */
-const TYPES_EXPECTED: Record<string, [string, string, string | null]> = {
-  'filament/My PLA.json': ['filament', 'ok', null],
-  'process/0.20mm Standard @BBL X1C - Copy.json': ['process', 'ok', null],
-  'process/Case Only.json': ['process', 'hidden', '0.20mm Standard @BBL X1C'],
-  'process/Added Suffix.json': ['process', 'hidden', '0.20mm Standard @BBL X2D'],
-  'process/Old Profile Word.json': ['process', 'hidden', null],
-  'process/Old Code.json': ['process', 'hidden', null],
-  'process/No Candidates.json': ['process', 'hidden', null],
-  'process/Template Parent.json': ['process', 'hidden', null],
-  'process/Name Mismatch.json': ['process', 'info', null],
-  'machine/Bambu Lab X1 Carbon 0.4 nozzle - Copy.json': ['machine', 'ok', null],
-  'machine/Case Only Printer.json': ['machine', 'hidden', null],
-  'machine/Old Model Name.json': ['machine', 'hidden', null],
-  'machine/base/My Printer 0.4 nozzle.json': ['machine', 'ok', null],
+/**
+ * types-bambu: file -> [type, status, pre-selected candidate or null, the high and medium
+ * candidates as "name:confidence"], from the fixture README.
+ */
+const TYPES_EXPECTED: Record<string, [string, string, string | null, string[]]> = {
+  'filament/My PLA.json': ['filament', 'ok', null, []],
+  'process/0.20mm Standard @BBL X1C - Copy.json': ['process', 'ok', null, []],
+  'process/Case Only.json': [
+    'process',
+    'hidden',
+    '0.20mm Standard @BBL X1C',
+    ['0.20mm Standard @BBL X1C:high'],
+  ],
+  'process/Added Suffix.json': [
+    'process',
+    'hidden',
+    '0.20mm Standard @BBL X2D',
+    ['0.20mm Standard @BBL X2D:high', '0.20mm High Quality @BBL X2D:medium'],
+  ],
+  'process/Old Profile Word.json': [
+    'process',
+    'hidden',
+    null,
+    ['0.20mm High Quality @BBL X2D:medium', '0.20mm Standard @BBL X2D:medium'],
+  ],
+  'process/Old Code.json': ['process', 'hidden', null, ['0.20mm Standard @BBL A1M:medium']],
+  'process/No Candidates.json': ['process', 'hidden', null, []],
+  'process/Template Parent.json': ['process', 'hidden', null, []],
+  'process/Name Mismatch.json': ['process', 'info', null, []],
+  'machine/Bambu Lab X1 Carbon 0.4 nozzle - Copy.json': ['machine', 'ok', null, []],
+  'machine/Case Only Printer.json': [
+    'machine',
+    'hidden',
+    null,
+    ['Bambu Lab X1 Carbon 0.4 nozzle:high'],
+  ],
+  'machine/Old Model Name.json': [
+    'machine',
+    'hidden',
+    null,
+    ['Bambu Lab A1 mini 0.4 nozzle:medium'],
+  ],
+  'machine/base/My Printer 0.4 nozzle.json': ['machine', 'ok', null, []],
 };
 
 describe('scan on the process and printer fixture', () => {
@@ -326,7 +354,11 @@ describe('scan on the process and printer fixture', () => {
     const got = Object.fromEntries(
       r.presets.map((p) => {
         const f = r.findings.find((x) => x.presetPath === p.path && x.ruleId === R1_ID);
-        return [rel(p.path), [p.type, p.status, f ? preselected(f) : null]];
+        const cs = f?.proposedFix?.kind === 'setInherits' ? f.proposedFix.candidates : [];
+        const strong = cs
+          .filter((c) => c.confidence !== 'low')
+          .map((c) => `${c.name}:${c.confidence}`);
+        return [rel(p.path), [p.type, p.status, f ? preselected(f) : null, strong]];
       }),
     );
     expect(got).toEqual(TYPES_EXPECTED);
@@ -346,6 +378,10 @@ describe('scan on the process and printer fixture', () => {
         'Studio hides it.',
     );
     expect(template?.proposedFix).toBeUndefined();
+    expect(template?.title).toBe('Parent is a template, not a preset');
+    expect(r.presets.find((p) => p.path.endsWith('/Template Parent.json'))?.reason).toBe(
+      'Based on the template "fdm_process_common", not a preset',
+    );
     const printer = find('/Case Only Printer.json');
     const cs = printer?.proposedFix?.kind === 'setInherits' ? printer.proposedFix.candidates : [];
     expect(cs[0]).toMatchObject({ name: 'Bambu Lab X1 Carbon 0.4 nozzle', confidence: 'high' });

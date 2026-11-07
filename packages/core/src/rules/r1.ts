@@ -65,9 +65,10 @@ import {
   BASE_ID_NOTE,
   eqi,
   joinList,
-  missingIntro,
+  missingParent,
   nameFieldNote,
   orderCandidates,
+  preselectedByInfoText,
   preselection,
   quoteCandidate,
   rewordFinding,
@@ -189,14 +190,15 @@ async function orphanFinding(
 ): Promise<Finding> {
   const target = await describeTarget(missing, preset, ctx);
   const ranked = await rankCandidates(target, preset, ctx);
+  const why = await missingParent(missing, ctx.system);
   const finding: Finding = {
     ruleId: R1_ID,
     severity: 'error',
     presetPath: preset.path,
     presetName: name,
     status: 'hidden',
-    title: 'Parent preset is missing',
-    explanation: explain(target, ranked, ctx) + nameFieldNote(missing, ctx.presets),
+    title: why.title,
+    explanation: explain(target, ranked, why.intro) + nameFieldNote(missing, ctx.presets),
   };
   if (ranked.length > 0) {
     finding.proposedFix = { kind: 'setInherits', candidates: ranked.map((r) => r.candidate) };
@@ -512,8 +514,7 @@ function printerLabel(p: ParsedPresetName): string {
   return p.nozzle !== undefined ? `any printer, ${p.nozzle} mm nozzle` : 'any printer';
 }
 
-function explain(target: Target, ranked: Ranked[], ctx: RuleContext): string {
-  const intro = missingIntro(target.missing, ctx.system);
+function explain(target: Target, ranked: Ranked[], intro: string): string {
   const high = ranked.filter((r) => r.candidate.confidence === 'high');
   const quote = (r: Ranked): string => quoteCandidate(r.candidate);
 
@@ -535,7 +536,7 @@ function explain(target: Target, ranked: Ranked[], ctx: RuleContext): string {
   if (high.length > 1) {
     const named = preselection(ranked);
     if (named) {
-      return `${intro} ${high.length} presets look like good replacements; ${quote(named)} is pre-selected because your preset's sync file (.info) names it.`;
+      return `${intro} ${high.length} presets look like good replacements; ${preselectedByInfoText(named.candidate)}.`;
     }
     return `${intro} ${high.length} presets look like good replacements; pick the one that matches your printer and nozzle.`;
   }

@@ -444,6 +444,19 @@ async function existingFiles(
   return { present, unreadable };
 }
 
+/**
+ * Studio's test for a system preset that is a real preset rather than a building block: only an
+ * explicit "false" makes it a template; a missing or empty key makes it a pure include only when
+ * the file's name is empty or contains "gcode" (src/libslic3r/PresetBundle.cpp:6718-6733 and
+ * Preset.cpp:1505-1506@v02.09.01.70). Any other value, or no key at all, is instantiable.
+ */
+export function instantiable(value: unknown, fileName: string): boolean {
+  if (value === undefined || value === null || value === '') {
+    return !(fileName === '' || fileName.includes('gcode'));
+  }
+  return !(value === 'false' || value === false);
+}
+
 async function readBody(
   fs: PresetFs,
   entry: SystemEntry,
@@ -471,7 +484,7 @@ async function readBody(
     ...entry,
     studioName: fileName !== undefined && fileName !== '' ? fileName : entry.name,
     inherits: str(json['inherits']) ?? '',
-    instantiation: json['instantiation'] === 'true' || json['instantiation'] === true,
+    instantiation: instantiable(json['instantiation'], fileName ?? ''),
   };
   const settingId = str(json['setting_id']);
   if (settingId !== undefined) preset.settingId = settingId;
@@ -631,7 +644,18 @@ async function loadVendorIndexes(
   listing: readonly DirEntry[],
   options: Omit<SystemIndexOptions, 'vendor'>,
 ): Promise<SystemIndex> {
+  return (await loadVendorIndexesReporting(fs, profile, listing, options)).index;
+}
+
+/** loadVendorIndexes, also naming the vendors whose index failed (each only warned about). */
+async function loadVendorIndexesReporting(
+  fs: PresetFs,
+  profile: SlicerProfile,
+  listing: readonly DirEntry[],
+  options: Omit<SystemIndexOptions, 'vendor'>,
+): Promise<{ index: SystemIndex; failed: string[] }> {
   const plan = profile.vendorOrder(listing);
+  const failed: string[] = [];
   const parts: SystemIndex[] = [];
   const loadWarnings: string[] = [];
   let base: SystemIndex | undefined;
@@ -643,6 +667,7 @@ async function loadVendorIndexes(
       if (vendor === plan.base) base = part;
     } catch (err) {
       if (!(err instanceof SystemIndexError) || vendor === plan.required) throw err;
+      failed.push(vendor);
       loadWarnings.push(
         `${err.message} Presets based on ${vendor} system presets can't be checked.`,
       );
@@ -652,11 +677,11 @@ async function loadVendorIndexes(
   if (first === undefined) {
     // OrcaSlicer 2.5 may keep every vendor as a .opc file only: no index to read, but the
     // presets are there (opc.ts). Parents are then checked by name only.
-    if (plan.opc.length > 0) return emptyIndex(plan.opc[0]!, loadWarnings);
+    if (plan.opc.length > 0) return { index: emptyIndex(plan.opc[0]!, loadWarnings), failed };
     throw new SystemIndexError('No system preset index was found.');
   }
-  if (parts.length === 1 && loadWarnings.length === 0) return first;
-  return combineIndexes(parts, loadWarnings);
+  if (parts.length === 1 && loadWarnings.length === 0) return { index: first, failed };
+  return { index: combineIndexes(parts, loadWarnings), failed };
 }
 
 /** An index that lists nothing (every vendor is a .opc file). */
@@ -698,6 +723,8 @@ export interface SystemIndexSet {
   vendors: string[];
   /** OrcaSlicer 2.5: vendors present only as a .opc file (opc.ts). Empty for Bambu Studio. */
   opaque: OpaqueVendor[];
+  /** Per type, the vendors whose index failed to load (a warning only; see loadVendorIndexes). */
+  failedVendors: Partial<Record<PresetType, string[]>>;
   /** True when a readable .opc file holds this name (see opcHasString); false without any. */
   opcHas(name: string): boolean;
 }
@@ -718,12 +745,15 @@ export async function loadSystemIndexSet(
     machine: null,
   };
   const errors: Partial<Record<PresetType, SystemIndexError>> = {};
+  const failedVendors: Partial<Record<PresetType, string[]>> = {};
   for (const type of PRESET_TYPES) {
     try {
-      byType[type] = await loadVendorIndexes(fs, profile, listing, {
+      const loaded = await loadVendorIndexesReporting(fs, profile, listing, {
         listKey: LIST_KEY[type],
         optionalList: type !== 'filament',
       });
+      byType[type] = loaded.index;
+      if (loaded.failed.length > 0) failedVendors[type] = loaded.failed;
     } catch (err) {
       if (!(err instanceof SystemIndexError)) throw err;
       errors[type] = err;
@@ -752,6 +782,7 @@ export async function loadSystemIndexSet(
     },
     vendors: [...plan.json, ...plan.opc],
     opaque,
+    failedVendors,
     opcHas: (name) => bodies.some((b) => opcHasString(b, name)),
   };
 }

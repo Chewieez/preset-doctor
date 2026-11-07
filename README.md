@@ -40,6 +40,8 @@ process, leaves out of the list): it reads which printers and nozzles you've add
 marks a preset **Unsupported** when it is only for printers or a nozzle size you haven't added,
 with what to do in Studio. It never changes those presets.
 
+![A filament preset marked Unsupported, with the printers you have added](docs/screenshots/unsupported.png)
+
 ## Which slicers
 
 | | Bambu Studio | OrcaSlicer |

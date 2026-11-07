@@ -27,6 +27,7 @@ import {
   isProblem,
   mergePaths,
   notForSelectionFinding,
+  partialIndexText,
   presetsOfType,
   presetTabs,
   problemsByType,
@@ -36,6 +37,7 @@ import {
   SLICER_TEXT,
   slicerOfRoot,
   typeOf,
+  unreadIndexTypes,
   visiblePresets,
   type Filter,
   type Selection,
@@ -190,9 +192,13 @@ export function App() {
   const cloud = payload ? cloudSyncFinding(payload.result) : undefined;
   const otherNote = payload ? notForSelectionFinding(payload.result) : undefined;
   // The scan's slicer; before a scan, the slicer whose default folder is shown (desktop).
-  const slicer =
-    SLICER_TEXT[payload?.result.slicer ?? slicerOfRoot(config?.slicers ?? [], root) ?? 'bambu'];
+  const rootSlicer = slicerOfRoot(config?.slicers ?? [], root);
+  const slicer = SLICER_TEXT[payload?.result.slicer ?? rootSlicer ?? 'bambu'];
+  /** False while `slicer` is only the Bambu Studio fallback (no scan, not a default folder). */
+  const slicerKnown = payload !== null || rootSlicer !== undefined;
   const slicerName = slicer.name;
+  const unreadTypes = payload ? unreadIndexTypes(payload.result) : [];
+  const partialIndex = partialIndexText(unreadTypes, slicer.name);
   /** "Show them" on the grouped note: every such row, on a tab that has some. */
   const showOtherSelection = (): void => {
     if (!payload) return;
@@ -320,12 +326,16 @@ export function App() {
             </span>
           </div>
         )}
-        {payload && !payload.result.systemIndexRead && (
+        {payload && (unreadTypes.length > 0 || !payload.result.systemIndexRead) && (
           <div className="banner warning" role="alert" data-testid="no-system-banner">
             <span>
-              <strong>These results are incomplete.</strong> {slicer.name}'s system presets (
-              <code>{slicer.index}</code>) could not be read, so Preset Doctor couldn't check
-              whether the presets yours are based on still exist.{' '}
+              <strong>These results are incomplete.</strong>{' '}
+              {partialIndex ?? (
+                <>
+                  {slicer.name}'s system presets (<code>{slicer.index}</code>) could not be read, so
+                  Preset Doctor couldn't check whether the presets yours are based on still exist.
+                </>
+              )}{' '}
               {web
                 ? 'Copy the "system" folder into your copy again, then scan again.'
                 : `Open ${slicer.name} once, close it, then scan again.`}
@@ -542,6 +552,7 @@ export function App() {
             platform={config?.platform ?? 'desktop'}
             root={root}
             backupsDir={config?.backupsDir ?? ''}
+            slicerKnown={slicerKnown}
             studio={studio}
             studioGate={studioGate}
             onClose={() => setBackupsOpen(false)}

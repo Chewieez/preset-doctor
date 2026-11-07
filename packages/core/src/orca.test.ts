@@ -1,4 +1,12 @@
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -13,7 +21,9 @@ import { nodeFs } from './node/nodeFs.js';
 import { cerealStrings, makeOpc, opcHasString, readOpc } from './opc.js';
 import { derivedRenamedFrom, genericFallbackName } from './orcaLookup.js';
 import { R1_ID } from './rules/r1.js';
-import { R2_ID, R3_NOTE_ID } from './rules/r2r3.js';
+import type { RuleContext } from './rules/context.js';
+import { orcaMissingFinding } from './rules/r1Orca.js';
+import { compatFinding, R2_ID, R3_NOTE_ID } from './rules/r2r3.js';
 import { scan, ScanError } from './scan.js';
 import { BAMBU, detectSlicer, ORCA, SLICERS } from './slicer.js';
 import { loadSystemIndexSet, splitEscaped } from './systemIndex.js';
@@ -130,7 +140,9 @@ describe('OrcaSlicer profile', () => {
       json: ['OrcaFilamentLibrary', 'custom', 'Elegoo'],
       opc: ['BBL'],
       base: 'OrcaFilamentLibrary',
+      required: 'OrcaFilamentLibrary',
     });
+    expect(ORCA.vendorOrder([f('Elegoo.json')])).toEqual({ json: ['Elegoo'], opc: [] });
   });
 
   it('reads the version from the header and hides the Unsupported group from 2.4 on', () => {
@@ -166,6 +178,36 @@ describe('OrcaSlicer profile', () => {
       /^OrcaSlicer syncs your presets with Orca Cloud and the Bambu cloud\. /,
     );
     expect(text.explanation).not.toMatch(/Studio/);
+  });
+});
+
+describe('OrcaSlicer "Show unsupported presets" hint', () => {
+  const finding = (type: 'filament' | 'process') =>
+    compatFinding(
+      {
+        path: `user/default/${type}/Mine.json`,
+        name: 'Mine',
+        type,
+        detail: {
+          state: 'printer-not-added',
+          printers: ['Bambu Lab H2D 0.4 nozzle'],
+          source: { kind: 'own' },
+        },
+        context: {
+          checked: true,
+          enabled: [],
+          userPrinters: 0,
+          unsupportedGroup: 'hidden-by-setting',
+        },
+      },
+      ORCA,
+    );
+
+  it('is given for filaments only: the setting does not reach the process list', () => {
+    expect(finding('filament')?.explanation).toContain('Show unsupported presets');
+    const proc = finding('process')?.explanation ?? '';
+    expect(proc).not.toContain('Show unsupported presets');
+    expect(proc).toContain("doesn't offer it in the process list for any printer you've added");
   });
 });
 
@@ -441,6 +483,115 @@ describe('OrcaSlicer parent lookup', () => {
   });
 });
 
+describe('OrcaSlicer vendor indexes that fail to load', () => {
+  it('a broken library stops the parent check: nothing is called missing', async () => {
+    const { dir, cleanup } = tempFixture('orca');
+    try {
+      const path = join(dir, 'system', 'OrcaFilamentLibrary.json');
+      const text = readFileSync(path);
+      writeFileSync(path, text.subarray(0, text.length - 20));
+      for (const userId of ['default', '1000000001']) {
+        const r = await scan(nodeFs(dir, { readOnly: true }), { userId });
+        expect(r.indexesRead.filament).toBe(false);
+        expect(r.presets.some((p) => p.status === 'hidden')).toBe(false);
+        expect(r.findings.some((f) => f.ruleId === R1_ID && f.status === 'hidden')).toBe(false);
+        expect(
+          r.findings.some(
+            (f) =>
+              f.proposedFix?.kind === 'setInherits' &&
+              f.proposedFix.candidates.some((c) => c.preselected),
+          ),
+        ).toBe(false);
+      }
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('another broken vendor: a parent that is not found "could not be checked"', async () => {
+    const fs = orcaFs(
+      {
+        OrcaFilamentLibrary: { 'Generic PLA @System': inst },
+        Elegoo: { 'Elegoo PLA @ECC': inst },
+      },
+      { 'user/default/filament/Mine.json': user('Mine', 'Elegoo PLA Pro @ECC') },
+    );
+    await fs.writeText('system/Elegoo.json', '{"name": "Elegoo", "filament_li');
+    const r = await scan(fs);
+    expect(
+      r.warnings.some((w) => w.includes("Presets based on Elegoo system presets can't be checked")),
+    ).toBe(true);
+    expect(r1Of(r, 'Mine')).toMatchObject({ status: 'info', title: 'Parent could not be checked' });
+    expect(byName(r, 'Mine')?.status).toBe('info');
+  });
+});
+
+describe('OrcaSlicer before 2.3', () => {
+  it('finds parents by their exact name only: no renamed_from, no "Generic" fallback', async () => {
+    const vendors = {
+      OrcaFilamentLibrary: {
+        'Generic PLA @System': inst,
+        'New PLA @System': { renamed_from: 'Old PLA @System', ...inst },
+      },
+    };
+    const extra = (header: string) => ({
+      'OrcaSlicer.conf': JSON.stringify({ app: {}, header }),
+      'user/default/filament/Renamed.json': user('Renamed', 'Old PLA @System'),
+      'user/default/filament/Generic.json': user('Generic', 'Generic PLA @Gone'),
+    });
+    const old = await scan(orcaFs(vendors, extra('OrcaSlicer 2.2.0')));
+    expect(byName(old, 'Renamed')?.status).toBe('hidden');
+    expect(byName(old, 'Generic')?.status).toBe('hidden');
+    const now = await scan(orcaFs(vendors, extra('OrcaSlicer 2.3.0')));
+    expect(r1Of(now, 'Renamed')?.title).toBe('Parent found under its new name');
+    expect(r1Of(now, 'Generic')?.title).toBe('OrcaSlicer substitutes a generic parent');
+  });
+});
+
+describe('OrcaSlicer brand hint', () => {
+  it('takes back a base_id pre-selection among several high candidates, wording included', () => {
+    const cand = (name: string, preselected: boolean) => ({
+      name,
+      confidence: 'high' as const,
+      reason: 'r',
+      preselected,
+      source: 'system' as const,
+    });
+    // The sentence r1.ts writes for this case (pinned in r1.test.ts too).
+    const f: Finding = {
+      ruleId: R1_ID,
+      severity: 'error',
+      presetPath: 'user/default/filament/Mine.json',
+      presetName: 'Mine',
+      status: 'hidden',
+      title: 'Parent preset is missing',
+      explanation:
+        'This preset is based on "Baz @Gone K1 0.60 nozzle", which no longer exists. 2 presets ' +
+        'look like good replacements; "Baz @Gone K1 0.6 nozzle" is pre-selected because your ' +
+        "preset's sync file (.info) names it.",
+      proposedFix: {
+        kind: 'setInherits',
+        candidates: [cand('Baz @Gone K1', false), cand('Baz @Gone K1 0.6 nozzle', true)],
+      },
+    };
+    const ctx = {
+      profile: ORCA,
+      system: { names: () => [] },
+      orca: { unchecked: false, vendors: ['OrcaFilamentLibrary'] },
+    } as unknown as RuleContext;
+    const out = orcaMissingFinding(f, 'Baz @Gone K1 0.60 nozzle', ctx);
+    expect(out.explanation).toContain('If you turned off the Gone printers');
+    expect(out.explanation).not.toContain('is pre-selected');
+    expect(out.explanation).toContain(
+      '"Baz @Gone K1 0.6 nozzle" is the one your preset\'s sync file (.info) names',
+    );
+    expect(
+      out.proposedFix?.kind === 'setInherits' &&
+        out.proposedFix.candidates.some((c) => c.preselected),
+    ).toBe(false);
+  });
+});
+
 describe('OrcaSlicer 2.5 packed presets (.opc)', () => {
   const body = cerealStrings([
     'BBL',
@@ -544,6 +695,22 @@ describe('backups and restore across slicers', () => {
     const bambuTarget = memFs({});
     expect((await restoreBackup(bambuTarget, bambuDest, bb.id)).skipped).toEqual([]);
     expect(await bambuTarget.exists('user/default/filament/Lone.info')).toBe(true);
+  });
+
+  it("skips a sync file when it can't tell whether its preset is on disk", async () => {
+    const dest = memFs();
+    const b = await createBackup(memFs(USER), dest, { slicer: 'orca' });
+    const target = memFs({ 'user/default/filament/Lone.json': '{"name":"Lone"}' });
+    const doubtful = {
+      ...target,
+      exists: async (p: string) => {
+        if (p.endsWith('Lone.json')) throw new Error('access denied');
+        return target.exists(p);
+      },
+    };
+    const res = await restoreBackup(doubtful, dest, b.id, { slicer: 'orca' });
+    expect(res.skipped).toEqual(['user/default/filament/Lone.info']);
+    expect(await target.exists('user/default/filament/Lone.info')).toBe(false);
   });
 
   it('puts a lone .info back when its preset exists on disk now', async () => {

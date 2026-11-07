@@ -1,6 +1,6 @@
 import type { AccountSummary } from '@preset-doctor/core';
 import type { Platform, SlicerFolder, StudioState } from '../contract';
-import { accountLabel } from '../model';
+import { accountLabel, slicerOfRoot } from '../model';
 import { useSlicer } from '../slicerContext';
 import { StudioPill } from './Badges';
 import { DesktopAppLink } from './web/DesktopAppLink';
@@ -35,6 +35,8 @@ export function Header({
   const web = platform === 'web';
   const slicer = useSlicer();
   const installed = slicers.filter((s) => s.exists);
+  // The slicer whose default folder is shown; none for a picked folder, whichever slicer it is.
+  const shown = slicerOfRoot(slicers, root);
   return (
     <header className="header">
       <div className="brand">
@@ -53,10 +55,10 @@ export function Header({
             <button
               key={s.id}
               type="button"
-              aria-pressed={slicer.id === s.id}
+              aria-pressed={shown === s.id}
               disabled={busy}
               onClick={() => {
-                if (slicer.id !== s.id) onSwitchSlicer(s.root);
+                if (shown !== s.id) onSwitchSlicer(s.root);
               }}
               data-testid={`slicer-${s.id}`}
             >
