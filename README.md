@@ -38,7 +38,9 @@ so you choose the printer you actually have.
 It also explains presets that Studio loads but greys out under "Unsupported presets" (or, for a
 process, leaves out of the list): it reads which printers and nozzles you've added in Studio and
 marks a preset **Unsupported** when it is only for printers or a nozzle size you haven't added,
-with what to do in Studio. It never changes those presets.
+with what to do in Studio.
+
+Rule R2 (Unsupported Presets): If a custom preset is unsupported because its parent is locked to a printer you don't own (such as early Studio presets locked to `@BBL X1C`), Preset Doctor offers to retarget it to an installed printer (e.g. `@BBL P1S`) with one click.
 
 And if you made a filament preset on one nozzle size and want it on the others too (Studio offers
 it only on the size it was made for), Preset Doctor can add the other nozzle sizes you've added
@@ -233,8 +235,10 @@ and tells you which case it is:
   `<name>`. When one copy is for a printer you've added, the copies for the other printers only add
   that name, greyed out, under "Unsupported presets". Nothing to do; **Show them** lists them.
 
-Preset Doctor doesn't change which printers these presets are for: add the printer or nozzle in
-Studio instead. A process preset that doesn't fit isn't greyed out but left
+Rule R2 (Unsupported Presets): If a custom preset is unsupported because its parent is locked to
+a printer you don't own (such as early Studio presets locked to `@BBL X1C`), Preset Doctor offers to
+retarget it to an installed printer (e.g. `@BBL P1S`) with one click. Otherwise, add the printer or
+nozzle in Studio instead. A process preset that doesn't fit isn't greyed out but left
 out of the process list. A preset whose parent is missing doesn't show anywhere, not even under
 "Unsupported presets"; that's the one Preset Doctor repairs.
 
