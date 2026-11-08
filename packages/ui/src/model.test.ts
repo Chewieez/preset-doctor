@@ -26,6 +26,9 @@ import {
   initialSelection,
   isProblem,
   mergePaths,
+  nozzleNotice,
+  nozzleOfferText,
+  nozzleOffers,
   orderFindings,
   partialIndexText,
   PRESET_TYPE_ORDER,
@@ -35,13 +38,17 @@ import {
   repairNotice,
   restoreNotice,
   selectedChoices,
+  setChecked,
+  sizesText,
   SLICER_TEXT,
   slicerOfRoot,
+  tickablePaths,
   TYPE_TERMS,
   unreadIndexTypes,
   visiblePresets,
   windowsPath,
 } from './model';
+import { parseChoices } from './service';
 
 const preset = (path: string, status: PresetSummary['status'], name?: string): PresetSummary => ({
   type: 'filament',
@@ -150,6 +157,29 @@ describe('renderer model', () => {
     });
   });
 
+  it('"Select all" ticks only listed rows with a picked repair; "Select none" unticks them', () => {
+    const sel = initialSelection([
+      { presetPath: 'a.json', candidateName: 'High' },
+      { presetPath: 'c.json', rename: true },
+    ]);
+    const rows = visiblePresets(scan, byPath, 'all', '');
+    // b.json has no pick yet, d.json and e.json have no repair.
+    const tickable = tickablePaths(rows, byPath, sel.picks);
+    expect(tickable.sort()).toEqual(['a.json', 'c.json']);
+    const none = setChecked(sel, tickable, false);
+    expect(selectedChoices(scan, byPath, none)).toEqual([]);
+    expect(none.picks).toEqual(sel.picks);
+    const all = setChecked(none, tickable, true);
+    expect(selectedChoices(scan, byPath, all)).toHaveLength(2);
+    // A search narrows the list, and with it what is ticked; other rows keep their state.
+    const onlyC = setChecked(
+      none,
+      tickablePaths(visiblePresets(scan, byPath, 'all', 'c.json'), byPath, sel.picks),
+      true,
+    );
+    expect(selectedChoices(scan, byPath, onlyC)).toEqual([{ presetPath: 'c.json', rename: true }]);
+  });
+
   it('ignores a pick that is not one of the candidates', () => {
     expect(choiceFor('a.json', fixesFor([orphan]), { 'a.json': 'Nope' })).toBeNull();
   });
@@ -228,6 +258,19 @@ describe('result banners', () => {
     expect(two.lines[1]).toMatch(/^Next: copy the repaired files back into Bambu Studio/);
   });
 
+  it('words the nozzle-size change like a repair, with its own next step', () => {
+    const n = nozzleNotice(applied(['a.json', 'b.json'], true), { ...desktop, cloud: true });
+    expect(n.title).toBe('2 presets are now offered for more nozzle sizes.');
+    expect(n.lines).toEqual([
+      'Your presets were backed up first (backup 2026-11-05T17-30-00).',
+      'Next: open Bambu Studio and select another nozzle size to check. If anything looks wrong, use "Restore a backup".',
+      'Cloud sync is on: to upload the change to your other computers, open the preset in Bambu Studio and save it.',
+    ]);
+    const w = nozzleNotice(applied(['a.json'], false), { ...web, slicer: 'orca' });
+    expect(w.title).toBe('1 preset is now offered for more nozzle sizes.');
+    expect(w.lines[1]).toMatch(/^Next: copy the changed files back into OrcaSlicer/);
+  });
+
   it('adds the cloud-sync line only when sync is on', () => {
     const lines = repairNotice(applied(['a.json'], true), { ...desktop, cloud: true }).lines;
     expect(lines).toHaveLength(3);
@@ -242,6 +285,44 @@ describe('result banners', () => {
     expect(restoreNotice('2026-11-05T17-30-00', 4, true).lines[1]).toBe(
       'Copy the user folder back into Bambu Studio to finish (see below).',
     );
+  });
+});
+
+describe('nozzle offers', () => {
+  const offer = {
+    add: ['Bambu Lab X2D 0.6 nozzle', 'Bambu Lab X2D 0.8 nozzle', 'Bambu Lab P1S 0.6 nozzle'],
+    printers: [],
+    models: [
+      { model: 'Bambu Lab X2D', has: ['0.4'], add: ['0.6', '0.8'] },
+      { model: 'Bambu Lab P1S', has: [], add: ['0.6'] },
+    ],
+  };
+
+  it('lists presets with an offer by name, and words the sizes per printer', () => {
+    const withOffer = (path: string, name: string): PresetSummary => ({
+      ...preset(path, 'ok', name),
+      compat: { state: 'selected', printers: [], source: { kind: 'own' }, moreNozzles: offer },
+    });
+    const s: ScanResult = {
+      ...scan,
+      presets: [
+        withOffer('z.json', 'zeta'),
+        preset('o.json', 'ok', 'Other'),
+        withOffer('a.json', 'Alpha'),
+      ],
+    };
+    expect(nozzleOffers(s).map((p) => p.name)).toEqual(['Alpha', 'zeta']);
+    expect(nozzleOfferText(offer)).toBe('X2D: 0.4 mm now, adds 0.6 and 0.8 mm; P1S: adds 0.6 mm');
+    expect(sizesText(['0.2', '0.6', '0.8'])).toBe('0.2, 0.6 and 0.8 mm');
+  });
+
+  it('passes allNozzles through the request check, and nothing else new', () => {
+    expect(
+      parseChoices([
+        { presetPath: 'a.json', allNozzles: true },
+        { presetPath: 'b.json', allNozzles: 'yes', extra: 1 },
+      ]),
+    ).toEqual([{ presetPath: 'a.json', allNozzles: true }, { presetPath: 'b.json' }]);
   });
 });
 

@@ -3,10 +3,12 @@ import { printersText } from '../model';
 
 /** A grouped note under the printers line, with a link that lists the presets it counts. */
 export interface StripNote {
-  finding: Finding;
-  /** Lists the presets the note counts. */
+  finding: Pick<Finding, 'title' | 'explanation'>;
+  /** Lists the presets the note counts (or opens what the link says). */
   onShow: () => void;
   testId: string;
+  /** The link's words; "Show them" by default. */
+  action?: string;
 }
 
 interface Props {
@@ -32,8 +34,13 @@ export function PrintersStrip({ compat, slicer, notes }: Props) {
         <div key={n.testId} className="banner info" role="note" data-testid={n.testId}>
           <span>
             <strong>{n.finding.title}.</strong> {n.finding.explanation}{' '}
-            <button type="button" className="link-button" onClick={n.onShow}>
-              Show them
+            <button
+              type="button"
+              className="link-button"
+              onClick={n.onShow}
+              data-testid={`${n.testId}-action`}
+            >
+              {n.action ?? 'Show them'}
             </button>
           </span>
         </div>

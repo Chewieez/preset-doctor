@@ -1,8 +1,9 @@
 /**
  * R2 and R3: presets the slicer loads but doesn't offer for the printers that are added
- * (verdicts from compat.ts). Report-only: editing compatible_printers would fight Studio's
- * "save only what differs from the parent" model (src/libslic3r/Preset.cpp:685-722@v02.09.01.70),
- * so no fix is ever offered, and no text suggests editing files.
+ * (verdicts from compat.ts). Report-only: the fix is to add the printer or nozzle in the slicer,
+ * so no fix is ever offered, and no text suggests editing files. (The one edit of
+ * compatible_printers Preset Doctor makes is a separate, opt-in one: offering a filament that
+ * already loads on the other added nozzle sizes of its printer, nozzleOffer in compat.ts.)
  *
  * Where such a preset shows up:
  * - filaments go to the "Unsupported presets" group at the bottom, greyed out with a red flag

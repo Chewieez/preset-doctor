@@ -172,7 +172,7 @@ Both are built (see §2): `apps/desktop` repairs the real folder in place; `apps
 3. With cloud sync on, does a local edit win or does the cloud copy overwrite it on next login? Does bumping `updated_time` make local win?
 4. Does Studio cache the preset list anywhere that needs clearing after a repair?
 
-**Status (Nov 6, 2026): answered from Bambu Studio's source code, provisionally; still to be confirmed in Studio.** Each one needs a person watching Studio to settle. `docs/real-test-checklist.md` is the test script, with what the source predicts at each step. Until then, the tool uses these defaults (also written in the header of `packages/core/src/fix.ts`):
+**Status (Nov 7, 2026): answered from Bambu Studio's source code and confirmed in Studio for questions 2, 3 and 4** (results below). Question 1 (`base_id`) wasn't exercised, because none of the real orphans has a sidecar; it stays answered from the source only. `docs/real-test-checklist.md` is the test script, with what the source predicts at each step. The tool uses these defaults (also written in the header of `packages/core/src/fix.ts`):
 
 | # | Default | Why / how to change |
 |---|---|---|
@@ -181,7 +181,17 @@ Both are built (see §2): `apps/desktop` repairs the real folder in place; `apps
 | 3 | `updated_time` and `sync_info` are **never touched**. When `BambuStudio.conf` has `sync_user_preset: true`, the scan adds one note (`R5_CLOUD_SYNC`): turning sync off shouldn't be needed, the repair usually isn't uploaded on its own, and saving the preset in Studio uploads it. | The source says the orphaned cloud copy can't undo the repair, so no option to bump `updated_time` or set `sync_info` is offered: uploading is Studio's job, and a hand-made upload flag risks the cases below. Revisit if testing shows the cloud copy wins. |
 | 4 | **No caches are cleared.** After a repair the user is told to reopen Studio and check that the presets are back. | The source has no on-disk preset list. Add a cache-clearing step only if testing finds one. |
 
-### Source-code findings (provisional, pending in-Studio confirmation)
+### In-Studio results (Nov 7, 2026)
+
+Run by the maintainer on their own account folder: Bambu Studio **02.09.01.70** (Windows), system profile **02.09.00.75**, the X2D with all four nozzle sizes added, logged in. It covered checklist sections 0–3, on 18 orphaned filament presets (`inherits: "… @BBL X2D 0.6 nozzle"`, own `compatible_printers: ["Bambu Lab X2D 0.6 nozzle"]`, no sidecar). Every prediction matched.
+
+- **Profile update:** updating Studio from 02.08.02.61 and accepting "A new configuration package is available" (02.08.00.06 → 02.09.00.75) did **not** bring the `… 0.6 nozzle` parents back. The 18 stayed orphaned.
+- **Question 2 (1.2–1.4):** the orphans were in no list: not in the sidebar dropdown, not under "Unsupported presets", not in the filament settings tab. That tab offered no "show incompatible" option. A loaded preset with a 0.4-nozzle parent showed greyed out and unclickable under "Unsupported presets" on the 0.6 nozzle. The "Hidden in Studio" wording stands.
+- **Repair, sync off (2.1–2.8):** `"sync_user_preset": false` after unticking sync in Preferences. The scan found 18 hidden, each with a pre-selected high-confidence fix to the unsuffixed parent. Repairing one preset changed only its `inherits` line (checked against the backup zip) and created no sidecar. After a plain restart it was back on the 0.6 nozzle, greyed under "Unsupported presets" on the 0.4 nozzle, and Studio changed no file under `user/`. The other 17 were then repaired; all 18 showed on the 0.6 nozzle. Scan: 0 hidden.
+- **Question 4:** nothing needed clearing. A plain restart was enough.
+- **Question 3, sync on (3.1–3.3):** after turning sync on, waiting a few minutes, and restarting Studio, all 18 stayed visible. None of their `.json` files changed and no `.info` appeared, so the orphaned cloud copies did not overwrite the repairs. Studio did rewrite the `.info` sidecars of about 190 other, already-synced presets, both when sync was turned off and when it was turned on; that is its own bookkeeping (finding 4: a running Studio rewrites sidecars while it syncs). Steps 3.4–3.5 (upload after Save, deletion from another computer) and sections 5–6 were not run.
+
+### Source-code findings (confirmed in Studio for questions 2–4, see above)
 
 Read from [bambulab/BambuStudio](https://github.com/bambulab/BambuStudio) at tag `v02.09.01.70` (commit `56a57d00`, the latest release on Nov 6, 2026). `Preset.cpp`, `PresetBundle.cpp` and `GUI_App.cpp` are identical on `master` `355d71ee`. In `v02.08.02.61` the same code sits about 66 lines earlier in `Preset.cpp`. Paths are under `src/libslic3r/` unless they start with `slic3r/` (that is, `src/slic3r/GUI/`). A second reader checked each finding. The cloud side of sync runs in Bambu's closed-source network plugin, which could not be read.
 

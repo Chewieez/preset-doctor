@@ -133,6 +133,59 @@ export function setJsonArrayStringItem(
   throw new JsonFileError(`"${key}" has no item ${index}`);
 }
 
+/**
+ * Sets a top-level key to an array of strings, written as Studio writes arrays (one item per
+ * line, the file's own indent and line ending). An existing array is replaced in place; a missing
+ * key is added where Studio's sorted key order puts it (before the first key that sorts after
+ * it), so only that key's lines change. Throws if the key is duplicated or holds a non-array.
+ */
+export function setJsonStringArray(text: string, key: string, values: readonly string[]): string {
+  const tokens = tokenize(text);
+  const fields = topLevelFields(text, tokens);
+  const { indent, eol } = detectJsonFormat(text);
+  const array =
+    values.length === 0
+      ? '[]'
+      : `[${eol}${values.map((v) => `${indent}${indent}${JSON.stringify(v)}`).join(`,${eol}`)}${eol}${indent}]`;
+  const hits = fields.filter((f) => f.key === key);
+  if (hits.length > 1) throw new JsonFileError(`Key "${key}" appears more than once`);
+  if (hits.length === 1) {
+    const open = hits[0]!.valueIndex;
+    if (tokens[open]?.kind !== '[') throw new JsonFileError(`"${key}" is not an array`);
+    const close = matchingClose(tokens, open);
+    return text.slice(0, tokens[open]!.start) + array + text.slice(tokens[close]!.end);
+  }
+  const field = `${JSON.stringify(key)}: ${array}`;
+  // Plain code-unit order, as std::map<std::string> sorts Studio's keys.
+  const next = fields.find((f) => f.key > key);
+  if (next) {
+    const keyToken = tokens[next.valueIndex - 2]!;
+    return `${text.slice(0, keyToken.start)}${field},${eol}${indent}${text.slice(keyToken.start)}`;
+  }
+  const last = fields.at(-1);
+  if (!last) throw new JsonFileError('The object has no keys');
+  const lastToken = tokens[last.valueIndex]!;
+  const end =
+    lastToken.kind === '[' || lastToken.kind === '{'
+      ? tokens[matchingClose(tokens, last.valueIndex)]!.end
+      : lastToken.end;
+  return `${text.slice(0, end)},${eol}${indent}${field}${text.slice(end)}`;
+}
+
+/** The index of the bracket that closes the one at `open`. */
+function matchingClose(tokens: readonly Token[], open: number): number {
+  let depth = 0;
+  for (let i = open; i < tokens.length; i++) {
+    const k = tokens[i]!.kind;
+    if (k === '[' || k === '{') depth++;
+    else if (k === ']' || k === '}') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  throw new JsonFileError('Unbalanced brackets');
+}
+
 /** Decoded top-level keys in file order (useful for checks that care about key order). */
 export function topLevelKeys(text: string): string[] {
   const tokens = tokenize(text);

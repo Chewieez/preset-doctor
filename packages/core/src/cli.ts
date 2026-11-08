@@ -24,6 +24,7 @@ import {
   FixError,
   planFixes,
   StaleChangeError,
+  type FixChoice,
 } from './fix.js';
 import { unifiedDiff } from './diff.js';
 import { errorMessage } from './fs.js';
@@ -85,6 +86,9 @@ Usage:
       Show the repairs Preset Doctor is confident about, as diffs. Writes nothing.
   preset-doctor fix [folder] [...] --apply --yes [--no-base-id]
       Back up the user folder, then make those repairs. Close the slicer first.
+  preset-doctor fix --nozzles [folder] [--preset <name>] [--dry-run | --apply --yes]
+      Offer filament presets for every nozzle size you've added for their printer, not only
+      the one they were made for. Without --preset: every such preset. Diffs first, as above.
   preset-doctor backups [list]
       List backups made before repairs.
   preset-doctor backups restore <id> [folder] [--slicer <name>] --yes [--from-other-folder]
@@ -102,6 +106,7 @@ Options:
                    separated or repeated. Default: all. --json always prints everything.
   --json           Print the scan result as JSON.
   --no-base-id     Don't update base_id in the .info sync files when changing a parent.
+  --preset <name>  With --nozzles: only this preset (its name as listed). Can be repeated.
   --backups <dir>  Backup folder. Default: %APPDATA%\\PresetDoctor\\backups
   -h, --help       Show this help.   --version   Show the version.
 
@@ -128,6 +133,10 @@ interface Args {
   apply: boolean;
   yes: boolean;
   noBaseId: boolean;
+  /** fix --nozzles: offer filaments for more nozzle sizes instead of repairing. */
+  nozzles: boolean;
+  /** --preset, repeated. */
+  presets: string[];
   fromOtherFolder: boolean;
   help: boolean;
   version: boolean;
@@ -146,6 +155,7 @@ const FLAGS: ReadonlyMap<string, BoolFlag> = new Map<string, BoolFlag>([
   ['--yes', 'yes'],
   ['-y', 'yes'],
   ['--no-base-id', 'noBaseId'],
+  ['--nozzles', 'nozzles'],
   ['--from-other-folder', 'fromOtherFolder'],
   ['--help', 'help'],
   ['-h', 'help'],
@@ -160,6 +170,8 @@ function parseArgs(argv: readonly string[]): Args {
     apply: false,
     yes: false,
     noBaseId: false,
+    nozzles: false,
+    presets: [],
     fromOtherFolder: false,
     help: false,
     version: false,
@@ -168,12 +180,19 @@ function parseArgs(argv: readonly string[]): Args {
     const a = argv[i]!;
     const [flag, inline] = a.startsWith('--') && a.includes('=') ? a.split(/=(.*)/s) : [a];
     const key = flag === undefined ? undefined : FLAGS.get(flag);
-    if (flag === '--user' || flag === '--backups' || flag === '--type' || flag === '--slicer') {
+    if (
+      flag === '--user' ||
+      flag === '--backups' ||
+      flag === '--type' ||
+      flag === '--slicer' ||
+      flag === '--preset'
+    ) {
       const value = inline ?? argv[++i];
       if (value === undefined || value === '') throw new UsageError(`${flag} needs a value.`);
       if (flag === '--user') args.user = value;
       else if (flag === '--type') args.types = addTypes(args.types ?? [], value);
       else if (flag === '--slicer') args.slicer = slicerArg(value);
+      else if (flag === '--preset') args.presets.push(value);
       else args.backups = value;
     } else if (key !== undefined) {
       args[key] = true;
@@ -427,6 +446,45 @@ function printHeader(r: ScanResult, args: Args, out: (l?: string) => void): void
     out(`Note: ${f.title}. ${f.explanation}`);
   }
   for (const w of r.warnings) out(`Note: ${w}`);
+  const offers = copiesShown ? nozzleOfferRows(r) : [];
+  if (offers.length > 0 && !args.nozzles) {
+    out();
+    out(
+      `Note: ${offers.length} filament preset${offers.length === 1 ? ' is' : 's are'} offered for ` +
+        "only some of the nozzle sizes you've added. To offer them on every size: " +
+        fixHint(r.root, args, r, '--nozzles --dry-run'),
+    );
+  }
+}
+
+/** Filament presets that could also be offered for other added nozzle sizes. */
+function nozzleOfferRows(r: ScanResult): PresetSummary[] {
+  return r.presets.filter((p) => p.compat?.moreNozzles !== undefined);
+}
+
+/** fix --nozzles: every preset with a nozzle offer, or the ones --preset names. */
+function nozzleChoices(r: ScanResult, args: Args): FixChoice[] {
+  if (!selected(args, { type: 'filament' })) {
+    throw new UsageError(
+      '--nozzles changes filament presets only; leave out --type or include filament.',
+    );
+  }
+  const offers = nozzleOfferRows(r);
+  const chosen =
+    args.presets.length === 0
+      ? offers
+      : args.presets.flatMap((name) => {
+          // Every preset of that name: two files may carry the same "name".
+          const hits = offers.filter((x) => (x.name ?? x.fileStem) === name);
+          if (hits.length > 0) return hits;
+          const known = r.presets.some((x) => (x.name ?? x.fileStem) === name);
+          throw new UsageError(
+            known
+              ? `"${name}" is already offered for every nozzle size it can be, or isn't a filament preset with a printer list.`
+              : `There is no preset named "${name}" in this account.`,
+          );
+        });
+  return [...new Set(chosen)].map((p) => ({ presetPath: p.path, allNozzles: true }));
 }
 
 /** "Bambu Lab X2D (0.4, 0.6 mm), Bambu Lab P1S (0.4 mm); selected: Bambu Lab X2D 0.4 nozzle" */
@@ -466,17 +524,24 @@ async function fixCommand(
   err: (l: string) => void,
 ): Promise<number> {
   if (args.apply && args.dryRun) throw new UsageError('Use either --dry-run or --apply, not both.');
+  if (args.presets.length > 0 && !args.nozzles) {
+    throw new UsageError('--preset works with --nozzles only.');
+  }
   const root = rootArg(rest, d, args);
   const result = await runScan(root, args);
   const profile = slicerById(result.slicer);
   const inScope = new Set(result.presets.filter((p) => selected(args, p)).map((p) => p.path));
-  const choices = defaultChoices(result).filter((c) => inScope.has(c.presetPath));
+  const nozzles = args.nozzles;
+  const choices = nozzles
+    ? nozzleChoices(result, args)
+    : defaultChoices(result).filter((c) => inScope.has(c.presetPath));
   const readFs = nodeFs(root, { readOnly: true });
   const changes = await planFixes(readFs, result, choices, { updateBaseId: !args.noBaseId });
 
   printHeader(result, args, out);
   const unfixable = result.findings.filter(
     (f) =>
+      !nozzles &&
       (f.status === 'hidden' || f.status === 'broken') &&
       inScope.has(f.presetPath) &&
       !choices.some((c) => c.presetPath === f.presetPath),
@@ -484,7 +549,7 @@ async function fixCommand(
 
   out();
   if (changes.length === 0) {
-    out('Nothing to repair automatically.');
+    out(nozzles ? 'No preset needs more nozzle sizes.' : 'Nothing to repair automatically.');
   } else {
     out(`${changes.length} file change(s) planned:`);
     for (const c of changes) {
@@ -504,7 +569,8 @@ async function fixCommand(
       out();
       out('Dry run: nothing was written.');
       out(
-        `To make these repairs, close ${profile.displayName} and run: ${fixHint(root, args, result, '--apply --yes')}`,
+        `To make these ${nozzles ? 'changes' : 'repairs'}, close ${profile.displayName} and run: ` +
+          fixHint(root, args, result, '--apply --yes'),
       );
     }
     return EXIT.ok;
@@ -550,10 +616,14 @@ async function fixCommand(
     throw e;
   }
   out(`To undo: ${restoreHint(backup.id, root, args)}`);
-  out(`Next: open ${profile.displayName} and check that the presets are back.`);
+  out(
+    nozzles
+      ? `Next: open ${profile.displayName}, select another nozzle size and check that the presets are there.`
+      : `Next: open ${profile.displayName} and check that the presets are back.`,
+  );
   if (result.findings.some((f) => f.ruleId === R5_ID)) {
     out(
-      'Cloud preset sync is on: to upload a repair to your other computers, open the preset in ' +
+      `Cloud preset sync is on: to upload ${nozzles ? 'the change' : 'a repair'} to your other computers, open the preset in ` +
         `${profile.displayName} and save it.`,
     );
   }
@@ -688,8 +758,12 @@ function fixHint(root: string, args: Args, result: ScanResult, mode: string): st
       ? ` --type ${args.types.map((t) => (t === 'machine' ? 'printer' : t)).join(',')}`
       : '';
   const slicer = args.slicer !== undefined ? ` --slicer ${args.slicer}` : '';
+  // fix --nozzles keeps its mode and presets in the next command.
+  const nozzles = args.nozzles
+    ? ' --nozzles' + args.presets.map((n) => ` --preset ${quoteArg(n)}`).join('')
+    : '';
   return (
-    `preset-doctor fix ${quote(root)}${slicer}${user}${types} ${mode}` +
+    `preset-doctor fix ${quote(root)}${slicer}${user}${types}${nozzles} ${mode}` +
     (args.noBaseId ? ' --no-base-id' : '') +
     backupsFlag(args)
   );
@@ -706,6 +780,17 @@ function backupsFlag(args: Args): string {
 
 function quote(path: string): string {
   return /[\s"]/.test(path) ? `"${path}"` : path;
+}
+
+/**
+ * A preset name for a printed command: plain names as they are, anything else in double quotes
+ * with `"` doubled (cmd and PowerShell both read "" inside quotes as one quote). PowerShell
+ * expands `$` inside double quotes, so a name with `$` (and no `'`) gets single quotes instead.
+ */
+function quoteArg(name: string): string {
+  if (/^[\w.@+-]+$/.test(name)) return name;
+  if (name.includes('$') && !name.includes("'")) return `'${name}'`;
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 function isMainModule(): boolean {

@@ -4,6 +4,7 @@ import {
   displayName,
   fixesFor,
   hasFix,
+  tickablePaths,
   typeOf,
   TYPE_TERMS,
   type Filter,
@@ -38,11 +39,16 @@ interface Props {
   onSearch: (q: string) => void;
   onSelect: (path: string) => void;
   onToggle: (path: string, checked: boolean) => void;
+  /** Ticks (true) or unticks (false) these rows' repair boxes. */
+  onToggleMany: (paths: string[], checked: boolean) => void;
 }
 
 export function FindingsTable(props: Props) {
   const { rows, byPath, selection, selectedPath } = props;
   const slicer = useSlicer();
+  // Only the rows listed now: a search or filter narrows what "Select all" ticks.
+  const tickable = tickablePaths(rows, byPath, selection.picks);
+  const ticked = tickable.filter((p) => selection.checked[p]).length;
   return (
     <section className="table-card" aria-label="Presets">
       {props.tabs.length > 1 && (
@@ -87,6 +93,30 @@ export function FindingsTable(props: Props) {
             All presets ({props.totalCount})
           </button>
         </div>
+        {tickable.length > 0 && (
+          <div className="select-tools" role="group" aria-label="Select for repair">
+            <button
+              type="button"
+              className="btn small"
+              disabled={ticked === tickable.length}
+              title="Tick every repair in the list below"
+              onClick={() => props.onToggleMany(tickable, true)}
+              data-testid="select-all"
+            >
+              Select all
+            </button>
+            <button
+              type="button"
+              className="btn small"
+              disabled={ticked === 0}
+              title="Untick every repair in the list below"
+              onClick={() => props.onToggleMany(tickable, false)}
+              data-testid="select-none"
+            >
+              Select none
+            </button>
+          </div>
+        )}
         <input
           type="search"
           className="search"

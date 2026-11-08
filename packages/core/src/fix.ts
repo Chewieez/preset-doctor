@@ -6,7 +6,7 @@
  * applyChanges writes them, refusing if any file changed since it was planned.
  *
  * Defaults for SPEC section 10's open questions. Bambu Studio's source answers each of them
- * (provisionally, until confirmed in Studio; docs/real-test-checklist.md); citations are at
+ * (2-4 confirmed in Studio 02.09.01.70 on Nov 7, 2026; SPEC section 10); citations are at
  * v02.09.01.70 (56a57d00):
  *   1. base_id: updated to the new parent's setting_id, which is what Studio writes for a
  *      freshly created preset (it fills an empty base_id only, Preset.cpp:1985-1986, 2772-2773;
@@ -47,13 +47,22 @@ import {
 import {
   isRecord,
   setJsonArrayStringItem,
+  setJsonStringArray,
   setJsonStringField,
   tryParseJsonFile,
 } from './jsonFile.js';
+import { joinList } from './rules/r1Common.js';
 import { processPrintersNote } from './rules/r1Process.js';
 import { slicerById } from './slicer.js';
 import { TERMS } from './terms.js';
-import type { Candidate, Change, Finding, PresetSummary, ScanResult } from './types.js';
+import type {
+  Candidate,
+  Change,
+  Finding,
+  NozzleOffer,
+  PresetSummary,
+  ScanResult,
+} from './types.js';
 import { infoPathFor } from './userScan.js';
 
 export interface FixChoice {
@@ -63,6 +72,11 @@ export interface FixChoice {
   candidateName?: string;
   /** Apply the finding's renamePreset fix (R4 name/file mismatch). */
   rename?: boolean;
+  /**
+   * Offer the filament for the other added nozzle sizes of its printer too: compatible_printers
+   * becomes the scan's moreNozzles.printers (see nozzleOffer in compat.ts).
+   */
+  allNozzles?: boolean;
 }
 
 export interface PlanOptions {
@@ -151,6 +165,33 @@ export async function planFixes(
         after = setJsonStringField(after, ids.key, newName);
       }
       notes.push(`rename it from "${oldName ?? ''}" to "${newName}"`);
+    }
+
+    if (choice.allNozzles) {
+      const compat = summary.compat;
+      const offer = compat?.moreNozzles;
+      if (!compat || !offer) {
+        throw new FixError(`${summary.path} has no other nozzle sizes to be offered for.`);
+      }
+      // The list must still be the one the scan saw: the preset's own, or none (inherited).
+      const own = json['compatible_printers'];
+      const same =
+        compat.source.kind === 'own'
+          ? Array.isArray(own) &&
+            // The scan keeps only the strings of the list.
+            sameList(
+              own.filter((x) => typeof x === 'string'),
+              compat.printers,
+            )
+          : own === undefined;
+      if (!same) {
+        throw new FixError(
+          `${summary.path} changed since the scan ("compatible_printers" is different). Scan again.`,
+          true,
+        );
+      }
+      after = setJsonStringArray(after, 'compatible_printers', offer.printers);
+      notes.push(`offer it for ${nozzleWords(offer)} too`);
     }
 
     // The edits are byte splices; make sure the result is still valid JSON before offering it.
@@ -406,6 +447,18 @@ export async function applyChanges(fs: PresetFs, changes: readonly Change[]): Pr
 /** A scan from before preset types (or a hand-made one in a test) has only filament rows. */
 function typeOf(p: PresetSummary): PresetSummary['type'] {
   return p.type ?? 'filament';
+}
+
+function sameList(a: readonly unknown[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+/** "the Bambu Lab X2D 0.2, 0.6 and 0.8 mm nozzles", one part per printer model. */
+export function nozzleWords(offer: NozzleOffer): string {
+  const parts = offer.models.map(
+    (m) => `the ${m.model} ${joinList(m.add, 'and')} mm nozzle${m.add.length === 1 ? '' : 's'}`,
+  );
+  return joinList(parts, 'and');
 }
 
 function joinNotes(notes: string[]): string {

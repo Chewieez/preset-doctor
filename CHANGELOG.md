@@ -2,8 +2,21 @@
 
 ## Unreleased
 
-Waiting on an in-Studio test (see [docs/real-test-checklist.md](docs/real-test-checklist.md))
-before it is tagged.
+The in-Studio test ([docs/real-test-checklist.md](docs/real-test-checklist.md), sections 0–3)
+passed on Bambu Studio 02.09.01.70: all 18 hidden presets came back, and stayed after turning
+cloud sync on (SPEC.md §10, "In-Studio results").
+
+### Added
+
+- **Offer filament presets on more nozzle sizes.** Studio offers a filament preset only for the
+  nozzle sizes it was made for, so a preset saved on the 0.4 mm nozzle is missing on the 0.6 mm
+  one. A new note, "Some presets are offered for only some of your nozzle sizes", opens a list
+  of those presets (also reachable from a preset's details); the ticked ones get the other added
+  nozzle sizes of their printer in `compatible_printers`, after the usual review and backup. On
+  the command line: `fix --nozzles [--preset <name>]`. Studio keeps the list when the preset is
+  saved later (its source saves what differs from the parent).
+- **Select all / Select none** above the table tick or untick every repair in the list shown
+  (a search or filter narrows it).
 
 ### Changed
 
@@ -89,7 +102,7 @@ before it is tagged.
   `--type filament,process,printer`. An account's preset count now counts every type, so the
   default account can differ on a folder with many process or printer presets.
 - SPEC.md §10 records what Bambu Studio's source code says about each open question, with
-  citations (provisional until confirmed in Studio).
+  citations, and the in-Studio results that confirm questions 2–4.
 - `scripts/r1-history.ts` and [docs/r1-history.md](docs/r1-history.md): replay of every
   removed system preset across 17 Studio releases. No wrong fix was pre-selected.
 

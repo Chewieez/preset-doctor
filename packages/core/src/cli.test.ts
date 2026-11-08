@@ -438,6 +438,47 @@ describe('preset-doctor CLI with printer checks (R2/R3)', () => {
     expect(r.out).not.toContain('Not repaired automatically');
   });
 
+  it('fix --nozzles: offers filaments on more nozzle sizes, by --preset or all', async () => {
+    const { run, read, setRunning } = setup('unsupported-bambu');
+    const path = 'user/1000000001/filament/Other Process.json';
+    const scanOut = (await run('scan')).out;
+    expect(scanOut).toContain(
+      "Note: 1 filament preset is offered for only some of the nozzle sizes you've added. " +
+        'To offer them on every size: preset-doctor fix',
+    );
+    expect(scanOut).toContain('--nozzles --dry-run');
+
+    expect((await run('fix', '--preset', 'Other Process')).code).toBe(EXIT.usage);
+    const typed = await run('fix', '--nozzles', '--type', 'process');
+    expect(typed.code).toBe(EXIT.usage);
+    expect(typed.err).toContain('--nozzles changes filament presets only');
+    const unknown = await run('fix', '--nozzles', '--preset', 'Nope');
+    expect(unknown.code).toBe(EXIT.usage);
+    expect(unknown.err).toContain('There is no preset named "Nope"');
+
+    const before = read(path);
+    const dry = await run('fix', '--nozzles', '--preset', 'Other Process', '--dry-run');
+    expect(dry.code).toBe(EXIT.ok);
+    expect(dry.out).toContain('# Offer it for the Bambu Lab X2D 0.6 mm nozzle too.');
+    expect(dry.out).toContain('+        "Bambu Lab X2D 0.6 nozzle"');
+    expect(dry.out).toContain('--nozzles --preset "Other Process" --apply --yes');
+    expect(read(path)).toBe(before);
+
+    setRunning(true);
+    expect((await run('fix', '--nozzles', '--apply', '--yes')).code).toBe(EXIT.refused);
+    expect(read(path)).toBe(before);
+    setRunning(false);
+    const applied = await run('fix', '--nozzles', '--apply', '--yes');
+    expect(applied.code).toBe(EXIT.ok);
+    expect(applied.out).toContain('Done: changed 1 file(s).');
+    expect(applied.out).toContain('select another nozzle size');
+    expect(JSON.parse(read(path))).toMatchObject({
+      compatible_printers: ['Bambu Lab X2D 0.4 nozzle', 'Bambu Lab X2D 0.6 nozzle'],
+    });
+    expect((await run('scan')).out).not.toContain('nozzle sizes you');
+    expect((await run('fix', '--nozzles')).out).toContain('No preset needs more nozzle sizes.');
+  });
+
   it('scan --type printer: leaves out the note about filament and process presets', async () => {
     const { run } = setup('unsupported-bambu');
     const r = await run('scan', '--type', 'printer');

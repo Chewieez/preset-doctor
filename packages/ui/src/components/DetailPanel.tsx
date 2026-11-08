@@ -6,6 +6,7 @@ import {
   compatLines,
   displayName,
   hasFix,
+  nozzleOfferText,
   orderFindings,
   type PresetFixes,
   type Selection,
@@ -29,6 +30,8 @@ interface Props {
   slicer?: string;
   onPick: (path: string, candidate: string | null) => void;
   onToggle: (path: string, checked: boolean) => void;
+  /** Opens "Offer presets on more nozzle sizes" with this preset ticked. */
+  onMoreNozzles?: (path: string) => void;
 }
 
 export function DetailPanel({
@@ -40,6 +43,7 @@ export function DetailPanel({
   slicer = 'Bambu Studio',
   onPick,
   onToggle,
+  onMoreNozzles,
 }: Props) {
   if (!preset) {
     return (
@@ -85,8 +89,22 @@ export function DetailPanel({
           </ul>
           {preset.status === 'unsupported' && (
             <p className="muted">
-              Preset Doctor doesn't change which printers a preset is for: {slicer} keeps that list
-              itself. The explanation above says what to do in {slicer}.
+              Preset Doctor doesn't change which printers this preset is for. The explanation above
+              says what to do in {slicer}.
+            </p>
+          )}
+          {preset.compat.moreNozzles && onMoreNozzles && (
+            <p data-testid="more-nozzles">
+              It isn't offered for every nozzle size you've added (
+              {nozzleOfferText(preset.compat.moreNozzles)}).{' '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => onMoreNozzles(path)}
+                data-testid="more-nozzles-button"
+              >
+                Offer it on more nozzle sizes…
+              </button>
             </p>
           )}
         </section>

@@ -9,6 +9,7 @@ import {
   effectiveCompat,
   judgeCompat,
   markFamilyCopies,
+  nozzleOffer,
   type AliasHolder,
   type CompatInputs,
 } from './compat.js';
@@ -335,6 +336,12 @@ async function compatPass(args: {
   // Copies of a custom filament whose family has a copy for an added printer: one name in the
   // slicer, so they go in their own grouped note instead of being reported as unsupported.
   markFamilyCopies(details, holders, displayName);
+  // Filaments that could also be offered for the other added nozzle sizes of their printer.
+  for (const [preset, detail] of details) {
+    if (preset.type !== 'filament') continue;
+    const offer = nozzleOffer(detail, inputs, customFilamentAlias(preset));
+    if (offer) detail.moreNozzles = offer;
+  }
   const copies = presets.flatMap((p) => {
     const family = details.get(p)?.family;
     return family ? [{ name: displayName(p), family }] : [];

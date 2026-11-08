@@ -53,6 +53,7 @@ export function parseChoices(value: unknown): FixChoice[] {
     const choice: FixChoice = { presetPath: c.presetPath };
     if (typeof c.candidateName === 'string') choice.candidateName = c.candidateName;
     if (c.rename === true) choice.rename = true;
+    if (c.allNozzles === true) choice.allNozzles = true;
     return choice;
   });
 }

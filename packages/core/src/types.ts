@@ -246,6 +246,21 @@ export interface CompatDetail {
    * printer, or it is for a printer preset of the account's that can't load).
    */
   shownAs?: CompatAlias;
+  /**
+   * A filament offered for some, but not all, of the added nozzle sizes of an added printer:
+   * the printers its list would gain. See nozzleOffer (compat.ts).
+   */
+  moreNozzles?: NozzleOffer;
+}
+
+/** Nozzle sizes of added printers that a filament preset could also be offered for. */
+export interface NozzleOffer {
+  /** The printer presets to add to compatible_printers, e.g. 'Bambu Lab X2D 0.6 nozzle'. */
+  add: string[];
+  /** The whole new compatible_printers: the current list, then `add`. */
+  printers: string[];
+  /** Per printer model: the added nozzle sizes it is offered for now, and the ones it would gain. */
+  models: { model: string; has: string[]; add: string[] }[];
 }
 
 /** A custom filament the slicer lists under its alias; see CompatDetail.shownAs. */

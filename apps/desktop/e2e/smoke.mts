@@ -146,6 +146,17 @@ try {
   assert.equal(await page.isVisible('[data-testid=cloud-banner]'), true, 'cloud sync banner');
   assert.equal(await page.isVisible('[data-testid=test-mode-banner]'), true, 'test mode banner');
 
+  // "Select none" and "Select all" untick and tick every repair in the list.
+  const fixbar = page.locator('[data-testid=fixbar] strong');
+  const selectedBefore = await fixbar.textContent();
+  await page.click('[data-testid=select-none]');
+  assert.equal(await fixbar.textContent(), 'Nothing selected for repair');
+  assert.equal(await page.isDisabled('[data-testid=fix-selected]'), true);
+  assert.equal(await page.isDisabled('[data-testid=select-none]'), true);
+  await page.click('[data-testid=select-all]');
+  assert.equal(await fixbar.textContent(), selectedBefore);
+  assert.equal(await page.isDisabled('[data-testid=select-all]'), true);
+
   await row(page, ORPHAN).click();
   const detail = page.locator('[data-testid=detail-panel]');
   await detail.locator('.candidate.chosen', { hasText: 'Generic PETG @BBL X2D' }).waitFor();
@@ -285,6 +296,53 @@ try {
     await row(page, 'On X2D 08').click();
     await detail.locator('h3', { hasText: "Made for a nozzle size you haven't added" }).waitFor();
     if (extraShots) await page.screenshot({ path: join(extraShots, 'unsupported-process.png') });
+
+    // "Offer on more nozzle sizes": the note opens the dialog with nothing ticked; the detail
+    // panel opens it with its preset ticked. The change goes through the review and a backup.
+    const nozzleNote = page.locator('[data-testid=nozzles-note]');
+    assert.match((await nozzleNote.textContent()) ?? '', /1 filament preset is offered/);
+    await page.click('[data-testid=nozzles-note-action]');
+    const nozzles = page.locator('[data-testid=nozzles-dialog]');
+    await nozzles.waitFor();
+    assert.deepEqual(await nozzles.locator('[data-testid=nozzle-list] strong').allTextContents(), [
+      'Other Process',
+    ]);
+    assert.match(
+      (await nozzles.locator('[data-testid=nozzle-list]').textContent()) ?? '',
+      /X2D: 0.4 mm now, adds 0.6 mm/,
+    );
+    assert.equal(await nozzles.locator('[data-testid=nozzle-row]').isChecked(), false);
+    assert.equal(await page.isDisabled('[data-testid=nozzles-review]'), true);
+    await page.click('[data-testid=nozzles-select-all]');
+    assert.equal(await nozzles.locator('[data-testid=nozzle-row]').isChecked(), true);
+    if (extraShots) await page.screenshot({ path: join(extraShots, 'nozzles.png') });
+    await nozzles.locator('button:has-text("Cancel")').click();
+    await nozzles.waitFor({ state: 'detached' });
+
+    await page.click('[data-testid=type-tab-filament]');
+    await page.click('.table-tools button:has-text("All presets")');
+    await row(page, 'Other Process').click();
+    await page.click('[data-testid=more-nozzles-button]');
+    assert.equal(await nozzles.locator('[data-testid=nozzle-row]').isChecked(), true);
+    await page.click('[data-testid=nozzles-review]');
+    const review = page.locator('[data-testid=review-dialog]');
+    await review.locator('h2', { hasText: 'Review the changes' }).waitFor();
+    await review.locator('[data-testid=diff]').first().waitFor();
+    assert.equal(await review.locator('input[type=checkbox]').count(), 0, 'no .info option');
+    await review.locator('button:has-text("Back up and change 1 preset")').click();
+    await page
+      .locator('[data-testid=result-banner]', { hasText: 'now offered for more nozzle sizes' })
+      .waitFor();
+    await page.waitForSelector('[data-testid=scan-button]:has-text("Scan again"):not([disabled])');
+    const widened = JSON.parse(
+      await readFile(join(dir, 'user', '1000000001', 'filament', 'Other Process.json'), 'utf8'),
+    ) as { compatible_printers?: string[] };
+    assert.deepEqual(widened.compatible_printers, [
+      'Bambu Lab X2D 0.4 nozzle',
+      'Bambu Lab X2D 0.6 nozzle',
+    ]);
+    if (extraShots) await page.screenshot({ path: join(extraShots, 'nozzles-done.png') });
+    assert.equal(await nozzleNote.count(), 0, 'nothing left to offer');
     await app.close();
   }
 

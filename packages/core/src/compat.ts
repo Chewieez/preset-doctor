@@ -25,6 +25,7 @@ import type {
   CompatDetail,
   CompatFamily,
   CompatSource,
+  NozzleOffer,
   PresetType,
   UserPreset,
 } from './types.js';
@@ -407,6 +408,62 @@ function withProcess(
     detail.process = 'cant-tell';
   }
   return detail;
+}
+
+/**
+ * The added nozzle sizes a filament could also be offered for: for each added printer model
+ * that its list names with at least one nozzle size, the added sizes of that model it lacks.
+ * Only for a list that already offers it for an added printer ('selected' or 'other-printer'),
+ * and never for a custom filament the slicer lists under its alias (customFilamentAlias): its
+ * copies share one name, and a wider list would change which copy holds it.
+ *
+ * Widening the list is safe in the slicer: a non-empty list decides on its own, the condition is
+ * ignored (is_compatible_with_printer, src/libslic3r/Preset.cpp:838-840@v02.09.01.70), and a
+ * save in Studio keeps it, since it differs from the parent's (save_current_preset keeps the
+ * edited config, :2663-2780; Preset::save writes what differs, :685-722). The values the preset
+ * doesn't set itself still come from its parent, made for the nozzle sizes it had.
+ */
+export function nozzleOffer(
+  detail: CompatDetail,
+  inputs: CompatInputs,
+  alias: string | null,
+): NozzleOffer | undefined {
+  if (detail.state !== 'selected' && detail.state !== 'other-printer') return undefined;
+  if (alias !== null || detail.source.kind === 'name') return undefined;
+  const list = detail.printers;
+  const models: NozzleOffer['models'] = [];
+  const add: string[] = [];
+  for (const m of inputs.enabledModels) {
+    const named = list
+      .map((n) => inputs.knownPrinters.get(n))
+      .filter(
+        (p): p is PrinterRef =>
+          p !== undefined && p.vendor === m.vendor && p.model === m.model && p.nozzle !== undefined,
+      );
+    if (named.length === 0) continue;
+    const missing = inputs.enabled.filter(
+      (p) =>
+        !p.isUser &&
+        p.vendor === m.vendor &&
+        p.model === m.model &&
+        p.nozzle !== undefined &&
+        m.nozzles.includes(p.nozzle) &&
+        !list.includes(p.name),
+    );
+    // Only a model it is already offered for: listed with an added nozzle size. A filament made
+    // only for a size that isn't added is R3's ("add that nozzle in the slicer"), not this.
+    const has = [...new Set(named.map((p) => p.nozzle!))].filter((n) => m.nozzles.includes(n));
+    if (missing.length === 0 || has.length === 0) continue;
+    missing.sort((a, b) => Number(a.nozzle) - Number(b.nozzle) || a.name.localeCompare(b.name));
+    add.push(...missing.map((p) => p.name));
+    models.push({
+      model: m.model,
+      has: has.sort((a, b) => Number(a) - Number(b)),
+      add: [...new Set(missing.map((p) => p.nozzle!))],
+    });
+  }
+  if (add.length === 0) return undefined;
+  return { add, printers: [...list, ...add], models };
 }
 
 /** The verdicts that get a finding of their own (the others only annotate the row). */

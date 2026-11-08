@@ -193,6 +193,23 @@ save them, then close OrcaSlicer. **Make a copy of `%APPDATA%\OrcaSlicer\user` f
    - **Predicted:** if `system` holds `.opc` files, Preset Doctor shows the warning about packed
      presets, and a preset whose parent it can't find there is "Parent could not be checked",
      never **Hidden**.
+## 7. More nozzle sizes (about 10 minutes)
+
+This checks "Offer presets on more nozzle sizes" (CHANGELOG, Unreleased). It needs a filament
+preset you made on one nozzle size, for example one based on `Generic PETG @BBL X2D 0.4 nozzle`.
+
+1. Close Studio. Scan with Preset Doctor, click **Choose presets…** in the note "Some presets are
+   offered for only some of your nozzle sizes", tick **one** preset, review and apply.
+   - **Predicted:** the diff adds only a `compatible_printers` list with every added X2D nozzle.
+2. Open Studio and select the X2D with each other nozzle size.
+   - **Predicted:** the preset is in the filament dropdown as a normal entry on every size, with
+     your own values (nozzle temperature and so on).
+3. Change one value in the preset, save it under the same name, and close Studio. Open the
+   preset's `.json`.
+   - **Predicted:** `compatible_printers` still lists every nozzle size (Studio keeps it, since it
+     differs from the parent's).
+4. If anything is off, use **Restore a backup…**.
+
 ## What to send back
 
 Copy this, fill in each line with **matched** or **didn't match**, and add what you saw where it
@@ -232,6 +249,9 @@ Sync at start:   on / off     Logged in: yes / no
 6.4 Unsupported group shown on 2.3.2:
 6.5 (2.4+) group hidden until the developer setting is on:
 6.6 (2.5) packed presets: warning, "could not be checked", nothing Hidden:
+7.1 diff adds only compatible_printers:
+7.2 preset shows normally on every nozzle size, own values intact:
+7.3 list kept after saving in Studio:
 ```
 
 Screenshots of the filament dropdown for 1.2, 1.4, 2.4 and 2.6 are the most useful.

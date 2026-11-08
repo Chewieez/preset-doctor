@@ -5,6 +5,7 @@ import type {
   CompatDetail,
   Finding,
   FixChoice,
+  NozzleOffer,
   PresetStatus,
   PresetSummary,
   PresetType,
@@ -191,6 +192,24 @@ export function initialSelection(defaults: readonly FixChoice[]): Selection {
   return sel;
 }
 
+/** The rows among `rows` whose repair box can be ticked: they have a repair, and it is picked. */
+export function tickablePaths(
+  rows: readonly PresetSummary[],
+  byPath: Map<string, Finding[]>,
+  picks: Selection['picks'],
+): string[] {
+  return rows
+    .filter((p) => choiceFor(p.path, fixesFor(byPath.get(p.path) ?? []), picks) !== null)
+    .map((p) => p.path);
+}
+
+/** "Select all" / "Select none": ticks or unticks `paths`, leaving every other row as it was. */
+export function setChecked(sel: Selection, paths: readonly string[], on: boolean): Selection {
+  const checked = { ...sel.checked };
+  for (const p of paths) checked[p] = on;
+  return { ...sel, checked };
+}
+
 export function selectedChoices(
   scan: ScanResult,
   byPath: Map<string, Finding[]>,
@@ -280,9 +299,7 @@ export function unreadIndexTypes(scan: ScanResult): PresetType[] {
  */
 export function partialIndexText(unread: readonly PresetType[], slicer: string): string | null {
   if (unread.length === 0 || unread.length === PRESET_TYPE_ORDER.length) return null;
-  const words = unread.map((t) => TYPE_TERMS[t].tab.toLowerCase());
-  const list =
-    words.length === 1 ? words[0]! : `${words.slice(0, -1).join(', ')} and ${words.at(-1)!}`;
+  const list = andList(unread.map((t) => TYPE_TERMS[t].tab.toLowerCase()));
   return (
     `Preset Doctor couldn't read ${slicer}'s system ${list} presets, so your ${list} presets ` +
     "weren't checked against them. Everything else was checked."
@@ -355,6 +372,61 @@ export function familyCopies(scan: ScanResult): PresetSummary[] {
 /** Rows the grouped note's "Show them" lists (see COMPAT_OTHER_QUERY), across every tab. */
 export function forOtherSelection(scan: ScanResult): PresetSummary[] {
   return scan.presets.filter((p) => p.compat !== undefined && isForOtherSelection(p.compat));
+}
+
+/** Filament presets that could also be offered for other added nozzle sizes, by name. */
+export function nozzleOffers(scan: ScanResult): PresetSummary[] {
+  return scan.presets
+    .filter((p) => p.compat?.moreNozzles !== undefined)
+    .sort((a, b) =>
+      displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base' }),
+    );
+}
+
+/** "0.2, 0.6 and 0.8 mm". */
+export function sizesText(sizes: readonly string[]): string {
+  return `${andList(sizes)} mm`;
+}
+
+/** "a", "a and b", "a, b and c". */
+function andList(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} and ${items.at(-1)!}`;
+}
+
+/** "X2D: 0.4 mm now, adds 0.2, 0.6 and 0.8 mm", one part per printer model. */
+export function nozzleOfferText(offer: NozzleOffer): string {
+  return offer.models
+    .map(
+      (m) =>
+        `${shortModel(m.model)}: ${m.has.length > 0 ? `${sizesText(m.has)} now, adds` : 'adds'} ${sizesText(m.add)}`,
+    )
+    .join('; ');
+}
+
+/** The banner after offering presets for more nozzle sizes. */
+export function nozzleNotice(
+  r: { written: readonly string[]; backup: { id: string }; backupIsNew: boolean },
+  ctx: { web: boolean; cloud: boolean; backupsDir: string; slicer?: SlicerId },
+): NoticeText {
+  const repaired = repairNotice(r, ctx);
+  const n = presetFilesIn(r.written);
+  const s = SLICER_TEXT[ctx.slicer ?? 'bambu'];
+  return {
+    title: `${n} preset${n === 1 ? ' is' : 's are'} now offered for more nozzle sizes.`,
+    lines: [
+      repaired.lines[0]!,
+      ctx.web
+        ? `Next: copy the changed files back into ${s.name} (see below), then open ${s.short} and select another nozzle size to check.`
+        : `Next: open ${s.name} and select another nozzle size to check. If anything looks wrong, use "Restore a backup".`,
+      ...(ctx.cloud
+        ? [
+            `Cloud sync is on: to upload the change to your other computers, open the preset in ${s.name} and save it.`,
+          ]
+        : []),
+    ],
+  };
 }
 
 /** "Bambu Lab X2D" -> "X2D": the brand adds nothing when every model is Bambu's. */

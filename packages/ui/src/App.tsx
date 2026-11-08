@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Finding, PresetSummary, PresetType, ScanResult } from '@preset-doctor/core';
+import type {
+  Finding,
+  FixChoice,
+  PresetSummary,
+  PresetType,
+  ScanResult,
+} from '@preset-doctor/core';
 import type { AppConfig, PlanPayload, ScanPayload, StudioState } from './contract';
 import { api, AppError, call, messageOf } from './api';
 import { BackupsDialog } from './components/BackupsDialog';
 import { DetailPanel, type Preview } from './components/DetailPanel';
 import { FindingsTable } from './components/FindingsTable';
 import { FixBar } from './components/FixBar';
+import { NozzlesDialog } from './components/NozzlesDialog';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
 import { PrintersStrip, type StripNote } from './components/PrintersStrip';
@@ -30,6 +37,8 @@ import {
   isProblem,
   mergePaths,
   notForSelectionFinding,
+  nozzleNotice,
+  nozzleOffers,
   partialIndexText,
   presetsOfType,
   presetTabs,
@@ -37,6 +46,7 @@ import {
   repairNotice,
   restoreNotice,
   selectedChoices,
+  setChecked,
   SLICER_TEXT,
   slicerOfRoot,
   typeOf,
@@ -64,6 +74,9 @@ interface CopyBackState {
 }
 
 interface ReviewState {
+  /** What is reviewed: repairs, or offering presets for more nozzle sizes. */
+  kind: 'repair' | 'nozzles';
+  choices: FixChoice[];
   plan: PlanPayload | null;
   loading: boolean;
   error: string | null;
@@ -86,6 +99,8 @@ export function App() {
   const lastScanned = useRef('');
   const [updateBaseId, setUpdateBaseId] = useState(true);
   const [review, setReview] = useState<ReviewState | null>(null);
+  /** The "more nozzle sizes" dialog, open with these presets ticked. */
+  const [nozzlesFor, setNozzlesFor] = useState<string[] | null>(null);
   const [applying, setApplying] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [backupsOpen, setBackupsOpen] = useState(false);
@@ -195,6 +210,7 @@ export function App() {
   const cloud = payload ? cloudSyncFinding(payload.result) : undefined;
   const otherNote = payload ? notForSelectionFinding(payload.result) : undefined;
   const copiesNote = payload ? familyCopiesFinding(payload.result) : undefined;
+  const offers = useMemo(() => (payload ? nozzleOffers(payload.result) : []), [payload]);
   // The scan's slicer; before a scan, the slicer whose default folder is shown (desktop).
   const rootSlicer = slicerOfRoot(config?.slicers ?? [], root);
   const slicer = SLICER_TEXT[payload?.result.slicer ?? rootSlicer ?? 'bambu'];
@@ -249,14 +265,21 @@ export function App() {
     setSelection((s) => ({ ...s, checked: { ...s.checked, [path]: on } }));
   };
 
-  const planReview = async (baseId: boolean): Promise<void> => {
+  const planReview = async (
+    baseId: boolean,
+    list: FixChoice[] = choices,
+    kind: ReviewState['kind'] = 'repair',
+  ): Promise<void> => {
     const id = ++reviewSeq.current;
-    setReview({ plan: null, loading: true, error: null });
+    const base = { kind, choices: list };
+    setReview({ ...base, plan: null, loading: true, error: null });
     try {
-      const plan = await call(api.plan(choices, { updateBaseId: baseId }));
-      if (id === reviewSeq.current) setReview({ plan, loading: false, error: null });
+      const plan = await call(api.plan(list, { updateBaseId: baseId }));
+      if (id === reviewSeq.current) setReview({ ...base, plan, loading: false, error: null });
     } catch (e) {
-      if (id === reviewSeq.current) setReview({ plan: null, loading: false, error: messageOf(e) });
+      if (id === reviewSeq.current) {
+        setReview({ ...base, plan: null, loading: false, error: messageOf(e) });
+      }
     }
   };
   const closeReview = (): void => {
@@ -281,22 +304,30 @@ export function App() {
       noteWritten(r.written);
       // The next step opens Studio, so the next write needs a fresh confirmation.
       setStudioConfirmed(false);
+      const ctx = {
+        web,
+        cloud: cloud !== undefined,
+        backupsDir: config?.backupsDir ?? '',
+        slicer: slicer.id,
+      };
       setNotice({
         kind: 'success',
         backupId: r.backup.id,
-        ...repairNotice(r, {
-          web,
-          cloud: cloud !== undefined,
-          backupsDir: config?.backupsDir ?? '',
-          slicer: slicer.id,
-        }),
+        ...(review.kind === 'nozzles' ? nozzleNotice(r, ctx) : repairNotice(r, ctx)),
       });
       await runScan(root, userId);
     } catch (e) {
       if (e instanceof AppError && e.code === 'partial') {
         closeReview();
         noteWritten(e.written ?? []);
-        setNotice({ kind: 'error', title: 'The repair stopped part-way.', lines: [e.message] });
+        setNotice({
+          kind: 'error',
+          title:
+            review.kind === 'nozzles'
+              ? 'The change stopped part-way.'
+              : 'The repair stopped part-way.',
+          lines: [e.message],
+        });
         await runScan(root, userId);
       } else {
         setReview((r) => (r ? { ...r, error: messageOf(e) } : r));
@@ -498,6 +529,22 @@ export function App() {
                         },
                       ]
                     : []),
+                  ...(offers.length > 0
+                    ? [
+                        {
+                          finding: {
+                            title: 'Some presets are offered for only some of your nozzle sizes',
+                            explanation:
+                              `${offers.length} filament preset${offers.length === 1 ? ' is' : 's are'} ` +
+                              `offered in ${slicer.name} for some of the nozzle sizes you've added, ` +
+                              'not all. Preset Doctor can add the others.',
+                          },
+                          onShow: () => setNozzlesFor([]),
+                          testId: 'nozzles-note',
+                          action: 'Choose presets…',
+                        },
+                      ]
+                    : []),
                 ] satisfies StripNote[]
               }
             />
@@ -524,6 +571,7 @@ export function App() {
                 onSearch={setSearch}
                 onSelect={setSelectedPath}
                 onToggle={toggle}
+                onToggleMany={(paths, on) => setSelection((s) => setChecked(s, paths, on))}
               />
               <DetailPanel
                 preset={selectedPreset}
@@ -534,6 +582,7 @@ export function App() {
                 slicer={slicerName}
                 onPick={pick}
                 onToggle={toggle}
+                onMoreNozzles={(path) => setNozzlesFor([path])}
               />
             </div>
           )}
@@ -563,12 +612,24 @@ export function App() {
             updateBaseId={updateBaseId}
             studio={studio}
             applying={applying}
+            kind={review.kind}
             onToggleBaseId={(on) => {
               setUpdateBaseId(on);
-              void planReview(on);
+              void planReview(on, review.choices, review.kind);
             }}
             onApply={() => void apply()}
             onClose={closeReview}
+          />
+        )}
+        {nozzlesFor && (
+          <NozzlesDialog
+            offers={offers}
+            initial={nozzlesFor}
+            onClose={() => setNozzlesFor(null)}
+            onReview={(list) => {
+              setNozzlesFor(null);
+              void planReview(updateBaseId, list, 'nozzles');
+            }}
           />
         )}
         {backupsOpen && (

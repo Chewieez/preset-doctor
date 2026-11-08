@@ -435,10 +435,25 @@ describe('scan on the process and printer fixture', () => {
 
 // Read-only check against the real install: npm run test:live -- scan
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live scan (read-only)', () => {
+  // The 18 orphans were repaired in the in-Studio test on Nov 7, 2026 (SPEC.md section 10); the
+  // broken-r1 fixture keeps them. This checks the repaired state, and the old test below runs
+  // only if a folder with orphans is back.
+  it('the repaired main account: nothing hidden, and the "06" presets use the fixed parents', async () => {
+    const fs = nodeFs(defaultPaths().studioRoot, { readOnly: true });
+    const r = await scan(fs);
+    if (r.findings.some((f) => f.ruleId === R1_ID)) return;
+    expect(r.presets.filter((p) => p.status === 'hidden' || p.status === 'broken')).toEqual([]);
+    const petg = r.presets.find((p) => p.name === 'Anycubic Petg 06');
+    expect(petg?.inherits).toBe('Generic PETG @BBL X2D');
+    expect(petg?.compat?.printers).toContain('Bambu Lab X2D 0.6 nozzle');
+  });
+
   it('finds the 18 orphans of the main account, each with a pre-selected fix', async () => {
     const fs = nodeFs(defaultPaths().studioRoot, { readOnly: true });
     const r = await scan(fs);
     const r1 = r.findings.filter((f) => f.ruleId === R1_ID);
+    // Repaired since (see above).
+    if (r1.length === 0) return;
     expect(r1).toHaveLength(18);
     const system = await loadSystemIndexes(fs);
     for (const f of r1) {

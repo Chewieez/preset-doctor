@@ -40,6 +40,10 @@ process, leaves out of the list): it reads which printers and nozzles you've add
 marks a preset **Unsupported** when it is only for printers or a nozzle size you haven't added,
 with what to do in Studio. It never changes those presets.
 
+And if you made a filament preset on one nozzle size and want it on the others too (Studio offers
+it only on the size it was made for), Preset Doctor can add the other nozzle sizes you've added
+for that printer. See [the FAQ](#faq).
+
 ![A filament preset marked Unsupported, with the printers you have added](docs/screenshots/unsupported.png)
 
 ## Which slicers
@@ -168,6 +172,7 @@ npm run cli -- scan --type process  # only process presets
 npm run cli -- scan --slicer orca   # the OrcaSlicer folder
 npm run cli -- fix --dry-run        # show the repairs as diffs (reads only)
 npm run cli -- fix --apply --yes    # back up, then repair (close Studio first)
+npm run cli -- fix --nozzles --dry-run   # offer filaments on every added nozzle size (diffs)
 npm run cli -- backups              # list backups
 npm run cli -- backups restore <id> --yes
 ```
@@ -184,6 +189,8 @@ don't use `npx`. The commands it prints (`preset-doctor fix ...`) are run the sa
 | `--type <types>` | Only these preset types: `filament`, `process`, `printer` (or `machine`), comma-separated or repeated. Default: all. The `scan` exit code counts only these. |
 | `--json` | Machine-readable scan output (always every type; each row has a `type`). |
 | `--no-base-id` | Don't update `base_id` in the `.info` sync files. |
+| `--nozzles` | `fix` only: instead of repairing, offer filament presets on every nozzle size you've added for their printer. Diffs first; `--apply --yes` writes. |
+| `--preset <name>` | With `--nozzles`: only this preset. Can be repeated. |
 | `--from-other-folder` | `backups restore` only: put back a backup that was made from a different folder. |
 | `--backups <dir>` | Where backups go. Default `%APPDATA%\PresetDoctor\backups`. |
 
@@ -226,14 +233,28 @@ and tells you which case it is:
   `<name>`. When one copy is for a printer you've added, the copies for the other printers only add
   that name, greyed out, under "Unsupported presets". Nothing to do; **Show them** lists them.
 
-Preset Doctor doesn't change these presets: Studio keeps each preset's printer list itself, and
-editing it by hand would fight that. A process preset that doesn't fit isn't greyed out but left
+Preset Doctor doesn't change which printers these presets are for: add the printer or nozzle in
+Studio instead. A process preset that doesn't fit isn't greyed out but left
 out of the process list. A preset whose parent is missing doesn't show anywhere, not even under
 "Unsupported presets"; that's the one Preset Doctor repairs.
 
+**I made a preset on the 0.4 mm nozzle. Why isn't it there on the 0.6 mm nozzle?**
+Studio offers a filament preset only for the nozzle sizes it was made for, and a preset you save
+takes that list from the Bambu preset it is based on (for example `Generic PETG @BBL X2D 0.4
+nozzle`, which is for the 0.4 mm nozzle only). Preset Doctor can add the other nozzle sizes you've
+added for that printer: click **Choose presets…** in the note "Some presets are offered for only
+some of your nozzle sizes", or **Offer it on more nozzle sizes…** in a preset's details (command
+line: `fix --nozzles`). It adds those printers to the preset's `compatible_printers` list, after a
+backup and a review, and changes nothing else. Saving the preset in Studio later keeps the list.
+Settings you didn't change yourself still come from the parent made for the original nozzle size;
+for Bambu's generic filaments those are the same on every size, but check the max volumetric speed
+on a much bigger or smaller nozzle. If you had already made a copy for another nozzle size, both
+show there afterwards: delete the one you don't need in Studio.
+
 **Do I need to turn off cloud preset sync?**
-Probably not. This comes from reading Bambu Studio's source code (version 02.09.01.70); it hasn't
-been confirmed by watching Studio yet ([SPEC.md §10](SPEC.md#10-open-questions-answer-by-testing-on-the-fixtures-and-in-studio-not-from-research)).
+No. This comes from Bambu Studio's source code (version 02.09.01.70), and a test in Studio
+02.09.01.70 confirmed it: 18 repaired presets stayed after turning sync on and restarting Studio
+([SPEC.md §10](SPEC.md#10-open-questions-answer-by-testing-on-the-fixtures-and-in-studio-not-from-research)).
 When Studio syncs, a cloud copy whose parent is missing is skipped the same way the local file was,
 so it can't put the broken version back. Studio usually doesn't upload a file that was changed
 outside it either, so the repair stays on this computer until you open the preset in Studio and
@@ -269,7 +290,8 @@ for a freshly created preset. (Studio itself leaves `base_id` as it was when a p
 changes, and only uses it for cloud sync, never to find the parent.) It never touches
 `updated_time` or `sync_info`. If a preset's internal name doesn't match its file name, it can
 also fix the name (and the matching `filament_settings_id`, `print_settings_id` or
-`printer_settings_id`).
+`printer_settings_id`). Offering a filament on more nozzle sizes changes only its
+`compatible_printers` list.
 
 ## Development
 

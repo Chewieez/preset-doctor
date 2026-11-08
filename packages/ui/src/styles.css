@@ -626,6 +626,39 @@ select {
   width: 220px;
 }
 
+/* "Offer presets on more nozzle sizes" dialog */
+.nozzle-notes {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.nozzle-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.nozzle-tools .search {
+  margin-right: auto;
+}
+
+.nozzle-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.select-tools {
+  display: inline-flex;
+  gap: 6px;
+  margin-right: auto;
+}
+
 /* Preset-type tabs above the table (only when the account has more than one type). */
 .type-tabs {
   padding: 10px 12px 0;
