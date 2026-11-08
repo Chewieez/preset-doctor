@@ -133,7 +133,7 @@ export function compatFinding(
           `${studio}'s printer selection. If you no longer have ${known.length === 1 ? 'it' : 'them'}, you ` +
           `can ignore this preset or delete it in ${short}.`;
 
-      return {
+      const finding: Finding = {
         ...base,
         ruleId: R2_ID,
         title: "Only for printers you haven't added",
@@ -143,13 +143,14 @@ export function compatFinding(
           source,
           advice,
         ),
-        proposedFix: hasRetarget
-          ? {
-              kind: 'setInherits',
-              candidates: detail.retargetCandidates!,
-            }
-          : undefined,
       };
+      if (hasRetarget) {
+        finding.proposedFix = {
+          kind: 'setInherits',
+          candidates: detail.retargetCandidates!,
+        };
+      }
+      return finding;
     }
     case 'unknown-printers':
       return {

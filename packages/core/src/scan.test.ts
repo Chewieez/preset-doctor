@@ -500,17 +500,22 @@ function fsWithConfig(options: {
 
   const userPresets: FakeUserPreset[] = options.userPresets.map((u) => {
     const match = /user\/[^/]+\/[^/]+\/(.+)\.json$/.exec(u.path);
-    const file = match ? match[1] : undefined;
-    return {
+    const file = match?.[1];
+    const p: FakeUserPreset = {
       type: u.type ?? 'filament',
-      name: file,
-      file,
-      inherits: u.inherits,
     };
+    if (file !== undefined) {
+      p.file = file;
+      p.name = file;
+    }
+    if (u.inherits !== undefined) {
+      p.inherits = u.inherits;
+    }
+    return p;
   });
 
   const accountMatch = /user\/([^/]+)\//.exec(options.userPresets[0]?.path ?? '');
-  const account = accountMatch ? accountMatch[1] : '1000000001';
+  const account = accountMatch?.[1] ?? '1000000001';
 
   return fakeStudio(options.systemPresets ?? defaultSystem, userPresets, {
     account,
