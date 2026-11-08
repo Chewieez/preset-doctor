@@ -751,13 +751,11 @@ select {
 
 .fix-hint {
   color: var(--accent);
-  font-size: 13px;
+  font-size: 12px;
   margin-top: 2px;
 }
 
 .fix-hint.fix-available {
-  color: var(--accent);
-  font-size: 12px;
   opacity: 0.85;
 }
 
