@@ -160,6 +160,13 @@ export function FindingsTable(props: Props) {
                 const fixable = hasFix(fixes);
                 const choice = choiceFor(p.path, fixes, selection.picks);
                 const checked = Boolean(selection.checked[p.path]) && choice !== null;
+                const distinctModels = new Set(
+                  fixes.candidates?.map((c) => c.printerModel).filter(Boolean),
+                );
+                const printerSummary =
+                  distinctModels.size > 1
+                    ? `${distinctModels.size} printers`
+                    : (fixes.candidates?.[0]?.printerModel ?? 'installed printer');
                 return (
                   <tr
                     key={p.path}
@@ -232,8 +239,7 @@ export function FindingsTable(props: Props) {
                           fixes.candidates &&
                           fixes.candidates.length > 0 ? (
                             <>
-                              Retarget available:{' '}
-                              {fixes.candidates[0]?.printerModel ?? 'installed printer'}
+                              Retarget available: {printerSummary}
                               {fixes.candidates.length > 1 && (
                                 <span className="fix-options-hint">
                                   {` (${fixes.candidates.length} options · click to choose)`}

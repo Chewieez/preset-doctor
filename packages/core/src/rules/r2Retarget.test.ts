@@ -498,4 +498,53 @@ describe('findRetargetCandidates', () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.reason).toBe('Switch parent to your added Bambu Lab P1S (0.4 mm nozzle)');
   });
+
+  it('normalizes nozzle strings like 0.40 vs 0.4 with high confidence', async () => {
+    const mockSystem: Partial<SystemIndex> = {
+      namesWithStem: () => ['Bambu PLA Basic @BBL P1S 0.4 nozzle'],
+      parsed: () => ({
+        stem: 'Bambu PLA Basic',
+        vendorTag: 'BBL',
+        printerCode: 'P1S',
+        nozzle: '0.40',
+      }),
+      effectiveCompatiblePrinters: async () => ['Bambu Lab P1S 0.4 nozzle'],
+      get: (name: string) => ({ name, file: `${name}.json` }) as unknown as SystemEntry,
+    };
+
+    const preset: UserPreset = {
+      type: 'filament',
+      accountId: '12345678',
+      path: 'user/12345678/filament/Bambu PLA Basic @BBL X1C.json',
+      fileStem: 'Bambu PLA Basic @BBL X1C',
+      isBase: false,
+      raw: '{}',
+      infoPath: 'user/12345678/filament/Bambu PLA Basic @BBL X1C.info',
+    };
+
+    const inputs: CompatInputs = {
+      enabled: [
+        {
+          name: 'Bambu Lab P1S 0.4 nozzle',
+          model: 'Bambu Lab P1S',
+          nozzle: '0.4',
+          vendor: 'BBL',
+          isUser: false,
+        },
+      ],
+      enabledModels: [{ vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] }],
+      knownPrinters: new Map(),
+      vendorCheck: true,
+    };
+
+    const candidates = await findRetargetCandidates(
+      preset,
+      'Bambu PLA Basic @BBL X1C 0.4 nozzle',
+      mockSystem as SystemIndex,
+      inputs,
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.confidence).toBe('high');
+  });
 });

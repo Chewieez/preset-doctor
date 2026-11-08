@@ -61,7 +61,10 @@ export interface Candidate {
   printers?: string[];
   /** When retargeting an unsupported preset: the printer model this candidate is for. */
   printerModel?: string;
-  /** When retargeting: suggested new preset name if the old name had the old printer tag. */
+  /**
+   * When retargeting: suggested new preset name if the old name had the old printer tag.
+   * Note: preset file renaming is deferred to avoid slicer cloud sync race conditions and collisions.
+   */
   suggestedName?: string;
 }
 

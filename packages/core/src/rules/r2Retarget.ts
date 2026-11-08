@@ -1,5 +1,5 @@
 import type { CompatInputs } from '../compat.js';
-import { parsePresetName } from '../names.js';
+import { parsePresetName, sameNozzle } from '../names.js';
 import type { SystemEntry, SystemIndex } from '../systemIndex.js';
 import type { Candidate, Confidence, UserPreset } from '../types.js';
 
@@ -7,6 +7,11 @@ import type { Candidate, Confidence, UserPreset } from '../types.js';
  * Suggests an updated preset name if the current name explicitly contains the old printer's tag.
  * E.g. "Bambu PLA Basic @BBL X1C - 60C" -> "Bambu PLA Basic @BBL P1S - 60C".
  * Returns undefined if no printer tag is present in the current name.
+ *
+ * NOTE: Applying preset file renames on disk during retarget is deliberately deferred
+ * to avoid cloud sync edge cases, filename collisions, and sync race conditions in
+ * Bambu Studio / Orca Slicer. The suggested name is computed here for reference and
+ * future non-destructive rename workflows.
  */
 export function suggestRetargetName(
   currentName: string,
@@ -77,8 +82,8 @@ export async function findRetargetCandidates(
 
     // Prefer exact nozzle match between candidate preset and enabled printer profile
     const matchedProfile =
-      compatibleProfiles.find((p) => (p.nozzle ?? '0.4') === candNozzle) ??
-      compatibleProfiles.find((p) => (p.nozzle ?? '0.4') === parentNozzle) ??
+      compatibleProfiles.find((p) => sameNozzle(p.nozzle ?? '0.4', candNozzle)) ??
+      compatibleProfiles.find((p) => sameNozzle(p.nozzle ?? '0.4', parentNozzle)) ??
       compatibleProfiles[0]!;
 
     const model = matchedProfile.model;
@@ -86,7 +91,7 @@ export async function findRetargetCandidates(
       continue;
     }
 
-    const confidence: Confidence = candNozzle === parentNozzle ? 'high' : 'medium';
+    const confidence: Confidence = sameNozzle(candNozzle, parentNozzle) ? 'high' : 'medium';
 
     const body = typeof system.load === 'function' ? await system.load(candName) : undefined;
     const entry = system.get(candName) as
