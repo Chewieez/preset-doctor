@@ -755,6 +755,12 @@ select {
   margin-top: 2px;
 }
 
+.fix-hint.fix-available {
+  color: var(--accent);
+  font-size: 12px;
+  opacity: 0.85;
+}
+
 .empty {
   padding: 40px 20px;
   text-align: center;
