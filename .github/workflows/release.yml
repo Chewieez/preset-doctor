@@ -61,7 +61,7 @@ jobs:
           cache: npm
       - run: npm ci
       # The exe is unsigned on purpose (see README); don't let electron-builder look for a cert.
-      - run: npm run desktop:dist
+      - run: npm run desktop:dist:win
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       # Launches what ships (the portable target builds win-unpacked first), not just out/: catches
@@ -77,9 +77,35 @@ jobs:
           path: apps/desktop/release/*.exe
           if-no-files-found: error
 
+  build-mac:
+    needs: [version, checks]
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-release
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+          if-no-files-found: error
+
   # Publishes with the preinstalled gh CLI and GitHub's own actions: no checkout, no npm.
   publish:
-    needs: build
+    needs: [build, build-mac]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -91,18 +117,25 @@ jobs:
         with:
           name: portable-exe
           path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: mac-release
+          path: dist
       # Lets anyone check the unsigned exe was built here: gh attestation verify <exe> -R <repo>.
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: dist/*.exe
+          subject-path: |
+            dist/*.exe
+            dist/*.dmg
+            dist/*.zip
       - name: Write checksums
         working-directory: dist
-        run: sha256sum *.exe > SHA256SUMS.txt
+        run: sha256sum *.* > SHA256SUMS.txt
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" dist/*
           --repo "$GITHUB_REPOSITORY"
           --title "$GITHUB_REF_NAME"
           --generate-notes
