@@ -59,6 +59,10 @@ export interface Candidate {
    * decides which printers Studio offers the process for.
    */
   printers?: string[];
+  /** When retargeting an unsupported preset: the printer model this candidate is for. */
+  printerModel?: string;
+  /** When retargeting: suggested new preset name if the old name had the old printer tag. */
+  suggestedName?: string;
 }
 
 export type ProposedFix =
@@ -251,6 +255,8 @@ export interface CompatDetail {
    * the printers its list would gain. See nozzleOffer (compat.ts).
    */
   moreNozzles?: NozzleOffer;
+  /** Suggested system preset parents from installed printers for unsupported presets. */
+  retargetCandidates?: Candidate[];
 }
 
 /** Nozzle sizes of added printers that a filament preset could also be offered for. */
