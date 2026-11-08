@@ -149,25 +149,26 @@ code {
   padding: 16px 20px 0;
 }
 
-.app > * {
+.app > *,
+.content > * {
   flex-shrink: 0;
 }
 
-.app > .content {
-  flex: 1 0 auto;
+/*
+ * <main> adds no box of its own: the strip, the banners and the table sit straight in .app, which
+ * scrolls when they don't fit. The table area grows into the spare height but never below 300px.
+ * (A fixed-height .content let its children spill out under the fix bar and footer.)
+ */
+.content {
+  display: contents;
 }
 
-.content {
-  min-height: 320px;
-  height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+.content > .split {
+  flex: 1 0 0;
+  min-height: 300px;
 }
 
 .split {
-  flex: 1;
-  min-height: 300px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
   gap: 16px;
@@ -957,6 +958,7 @@ select {
 }
 
 .footer {
+  margin-top: auto;
   display: flex;
   align-items: center;
   gap: 16px;

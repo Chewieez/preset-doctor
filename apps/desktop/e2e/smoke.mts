@@ -92,6 +92,45 @@ async function openWindow(app: ElectronApplication): Promise<Page> {
   return page;
 }
 
+/**
+ * At the window's smallest heights the page scrolls; the table area keeps its minimum height and
+ * never runs under the fix bar or the footer (it used to, and showed through behind them).
+ */
+async function checkShortWindow(app: ElectronApplication, page: Page): Promise<void> {
+  for (const height of [600, 700]) {
+    const before = await page.evaluate(() => window.innerHeight);
+    await app.evaluate(
+      ({ BrowserWindow }, h) => BrowserWindow.getAllWindows()[0]?.setSize(1400, h),
+      height,
+    );
+    await page.waitForFunction((b) => window.innerHeight !== b, before);
+    console.log(`  window ${height}px, page ${await page.evaluate(() => window.innerHeight)}px`);
+    if (extraShots) {
+      await page.evaluate(() => document.querySelector('.app')?.scrollTo(0, 1e6));
+      await page.screenshot({ path: join(extraShots, `short-${height}.png`) });
+      await page.evaluate(() => document.querySelector('.app')?.scrollTo(0, 0));
+    }
+    const box = async (sel: string) => {
+      const b = await page.locator(sel).first().boundingBox();
+      assert.ok(b, `${sel} is on the page`);
+      return b;
+    };
+    const split = await box('.split');
+    const fixbar = await box('[data-testid=fixbar]');
+    const footer = await box('.footer');
+    assert.ok(split.height >= 299, `table area keeps its minimum height at ${height}px`);
+    assert.ok(
+      split.y + split.height <= fixbar.y + 0.5,
+      `table ends above the fix bar at ${height}px`,
+    );
+    assert.ok(
+      fixbar.y + fixbar.height <= footer.y + 0.5,
+      `fix bar ends above the footer at ${height}px`,
+    );
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1400, 900));
+}
+
 async function scan(page: Page): Promise<void> {
   await page.click('[data-testid=scan-button]');
   await page.waitForSelector('[data-testid=scan-summary]');
@@ -249,6 +288,8 @@ try {
     // The filament tab opens first: it has rows that need attention.
     assert.equal(await rowsWith(page, 'unsupported').count(), 2);
     assert.equal(await row(page, 'Unknown Printer').locator('input[type=checkbox]').count(), 0);
+    // Three notes in the printers strip: the tallest header, so the likeliest to overflow.
+    await checkShortWindow(app, page);
     await row(page, 'Unknown Printer').click();
     const detail = page.locator('[data-testid=detail-panel]');
     await detail.locator('.badge.status-unsupported', { hasText: 'Unsupported' }).waitFor();

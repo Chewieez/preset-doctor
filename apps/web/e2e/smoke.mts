@@ -198,6 +198,30 @@ try {
   console.log(`  ${hiddenBefore} hidden presets`);
   assert.equal(hiddenBefore, 22);
 
+  step('A short window scrolls; the table never runs under the fix bar or footer');
+  for (const height of [420, 560, 700]) {
+    await page.setViewportSize({ width: 1400, height });
+    const box = async (sel: string) => {
+      const b = await page.locator(sel).first().boundingBox();
+      assert.ok(b, `${sel} is on the page`);
+      return b;
+    };
+    // boundingBox is in page coordinates, so scrolling doesn't change the order.
+    const split = await box('.split');
+    const fixbar = await box('[data-testid=fixbar]');
+    const footer = await box('.footer');
+    assert.ok(split.height >= 299, `table area keeps its minimum height at ${height}px`);
+    assert.ok(
+      split.y + split.height <= fixbar.y + 0.5,
+      `table ends above the fix bar at ${height}px`,
+    );
+    assert.ok(
+      fixbar.y + fixbar.height <= footer.y + 0.5,
+      `fix bar ends above the footer at ${height}px`,
+    );
+  }
+  await page.setViewportSize({ width: 1400, height: 900 });
+
   step('Fix stays off until "I\'ve closed Bambu Studio" is ticked');
   assert.equal(await page.isDisabled('[data-testid=fix-selected]'), true);
   assert.match((await page.textContent('[data-testid=fix-blocked-reason]')) ?? '', /tick the box/);

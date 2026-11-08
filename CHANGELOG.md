@@ -40,6 +40,8 @@ cloud sync on (SPEC.md §10, "In-Studio results").
 
 ### Fixed
 
+- In a short window the preset table no longer runs under the fix bar and footer (it showed
+  through behind them); the window scrolls instead.
 - System presets are named the way Studio names them (from the name inside each file, not the
   index), so an old profile where the two differ no longer shows a healthy preset as hidden.
 - `base_id` is never set equal to the preset's own `setting_id`, which Studio treats as broken.
