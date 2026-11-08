@@ -12,7 +12,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -b",
-    "dist": "electron-vite build && electron-builder --win portable --publish never",
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:win": "electron-vite build && electron-builder --win portable --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
     "e2e": "electron-vite build && node e2e/smoke.mts"
   },
   "devDependencies": {

@@ -1,12 +1,13 @@
 # Preset Doctor desktop app
 
-Electron + React (electron-vite), packaged by electron-builder as one portable, unsigned Windows exe.
+Electron + React (electron-vite), packaged by electron-builder for Windows and macOS.
 
 ```
-npm run desktop:dev     # from the repo root: dev server + Electron with hot reload
-npm run desktop:e2e     # build, then the end-to-end smoke test (also writes docs/screenshots/)
-npm run desktop:dist    # build release/PresetDoctor-<version>-portable.exe
-npm run icon -w apps/desktop   # regenerate build/icon.* and the other icon copies
+npm run desktop:dev          # from the repo root: dev server + Electron with hot reload
+npm run desktop:e2e          # build, then the end-to-end smoke test (also writes docs/screenshots/)
+npm run desktop:dist:mac     # build release/PresetDoctor-<version>-{arm64,x64}.dmg
+npm run desktop:dist:win     # build release/PresetDoctor-<version>-portable.exe
+npm run icon -w apps/desktop # regenerate build/icon.* and the other icon copies
 ```
 
 ## Layout

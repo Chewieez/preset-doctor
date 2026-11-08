@@ -24,6 +24,8 @@
     "desktop:dev": "npm run dev -w @preset-doctor/desktop",
     "desktop:e2e": "npm run e2e -w @preset-doctor/desktop",
     "desktop:dist": "npm run dist -w @preset-doctor/desktop",
+    "desktop:dist:win": "npm run dist:win -w @preset-doctor/desktop",
+    "desktop:dist:mac": "npm run dist:mac -w @preset-doctor/desktop",
     "web:dev": "npm run dev -w @preset-doctor/web",
     "web:build": "npm run build -w @preset-doctor/web",
     "web:preview": "npm run preview -w @preset-doctor/web",

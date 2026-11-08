@@ -56,6 +56,53 @@ function createWindow(): void {
   else void mainWindow.loadFile(nodePath.join(__dirname, '../renderer/index.html'));
 }
 
+function setupMenu(): void {
+  if (process.platform === 'darwin') {
+    const template: Electron.MenuItemConstructorOptions[] = [
+      {
+        label: app.name,
+        submenu: [
+          { role: 'about' },
+          { type: 'separator' },
+          { role: 'services' },
+          { type: 'separator' },
+          { role: 'hide' },
+          { role: 'hideOthers' },
+          { role: 'unhide' },
+          { type: 'separator' },
+          { role: 'quit' },
+        ],
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      },
+      {
+        label: 'Window',
+        submenu: [
+          { role: 'minimize' },
+          { role: 'zoom' },
+          { type: 'separator' },
+          { role: 'front' },
+          { type: 'separator' },
+          { role: 'close' },
+        ],
+      },
+    ];
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -64,9 +111,14 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow?.focus();
   });
   void app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    setupMenu();
     registerIpc(service, () => mainWindow, DONATION_URL);
     createWindow();
   });
-  app.on('window-all-closed', () => app.quit());
+  app.on('activate', () => {
+    if (mainWindow === null) createWindow();
+  });
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
 }

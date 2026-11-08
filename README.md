@@ -3,7 +3,7 @@
 **Finds and repairs custom presets (filament, process and printer) that disappeared after an
 update, for Bambu Studio and OrcaSlicer.**
 
-Free, open source, works offline. Windows. Not affiliated with Bambu Lab or the OrcaSlicer project.
+Free, open source, works offline. Windows and macOS. Not affiliated with Bambu Lab or the OrcaSlicer project.
 
 | Before | After |
 |---|---|
@@ -50,34 +50,36 @@ for that printer. See [the FAQ](#faq).
 
 | | Bambu Studio | OrcaSlicer |
 |---|---|---|
-| Folder | `%APPDATA%\BambuStudio` | `%APPDATA%\OrcaSlicer` |
+| Folder (Windows) | `%APPDATA%\BambuStudio` | `%APPDATA%\OrcaSlicer` |
+| Folder (macOS) | `~/Library/Application Support/BambuStudio` | `~/Library/Application Support/OrcaSlicer` |
 | Versions checked against the source | 02.09.01.70 | 2.3.2 and 2.5.0 |
 | Repairs | Yes | Yes |
 | Packed built-in presets (`.opc`, OrcaSlicer 2.5) | n/a | Checks that parents exist; suggests no replacements |
 
 Preset Doctor tells the two apart by their files (`BambuStudio.conf` or `OrcaSlicer.conf`, and the
 built-in preset folders), so a folder you pick is always handled as the slicer it belongs to. When
-both are installed, the Windows app shows a **Bambu Studio | OrcaSlicer** switch at the top.
+both are installed, the desktop app shows a **Bambu Studio | OrcaSlicer** switch at the top.
 
 OrcaSlicer differs from Bambu Studio in ways Preset Doctor follows: it finds a parent that was
 renamed (when the new preset lists the old name), falls back to a generic parent for
 "Generic ..." filaments, and lets any vendor's preset build on its shared filament library. A
-preset OrcaSlicer still loads that way is reported as **OK, with notes**, not as hidden. Mac and
-Linux aren't supported yet.
+preset OrcaSlicer still loads that way is reported as **OK, with notes**, not as hidden. Linux
+isn't supported yet.
 
 ## Download
 
-Get the `.exe` file from
-**[GitHub Releases](https://github.com/smehl86/preset-doctor/releases)**. It is a portable app,
-so there is nothing to install: download it and double-click it. The same exe works for Bambu
-Studio and OrcaSlicer.
+Get the app from **[GitHub Releases](https://github.com/smehl86/preset-doctor/releases)**:
+- **Windows:** Download the portable `.exe` (`PresetDoctor-<version>-portable.exe`). There is nothing to install: double-click to run.
+- **macOS:** Download the `.dmg` (`PresetDoctor-<version>-arm64.dmg` for Apple Silicon M1/M2/M3/M4, or `PresetDoctor-<version>-x64.dmg` for Intel Macs). Open the DMG and drag Preset Doctor to your Applications folder.
 
 **"Windows protected your PC"**: Windows shows this for apps without a paid code-signing
-certificate, and Preset Doctor doesn't have one. Click **More info**, then **Run anyway**. If you
-would rather check it first, the source code is all in this repo and the exe is built from it by
-[GitHub Actions](.github/workflows/release.yml). To check that the exe was built here:
-`gh attestation verify PresetDoctor-<version>-portable.exe -R smehl86/preset-doctor`, or compare
-its hash with `SHA256SUMS.txt` on the release page.
+certificate, and Preset Doctor doesn't have one. Click **More info**, then **Run anyway**.
+
+**"App cannot be opened because Apple cannot check it for malicious software"**: On macOS, right-click (or Control-click) the app icon in Finder, choose **Open**, and click **Open** in the dialog (or run `xattr -cr /Applications/Preset\ Doctor.app`).
+
+If you would rather check it first, the source code is all in this repo and release binaries are built from it by
+[GitHub Actions](.github/workflows/release.yml). To check that a release was built here:
+`gh attestation verify <file> -R smehl86/preset-doctor`, or compare its hash with `SHA256SUMS.txt` on the release page.
 
 ## Web version (no download)
 
