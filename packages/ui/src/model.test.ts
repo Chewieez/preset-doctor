@@ -23,6 +23,7 @@ import {
   findingsByPath,
   fixesFor,
   forOtherSelection,
+  hasFix,
   initialSelection,
   isProblem,
   mergePaths,
@@ -497,6 +498,36 @@ describe('printer checks (R2/R3)', () => {
         'Bambu Studio',
       )[0],
     ).toBe('Offered for: every printer of the BBL brand profile it is based on.');
+  });
+
+  it('extracts candidates and preselects single-model retarget candidate', () => {
+    const findings: Finding[] = [
+      {
+        ruleId: 'R2_PRINTER_NOT_ADDED',
+        severity: 'info',
+        status: 'unsupported',
+        presetPath: 'user/default/filament/Old.json',
+        title: "Only for printers you haven't added",
+        explanation: 'Needs P1S',
+        proposedFix: {
+          kind: 'setInherits',
+          candidates: [
+            {
+              name: 'New P1S Parent',
+              confidence: 'high',
+              reason: 'Switch parent to your added Bambu Lab P1S',
+              source: 'system',
+              preselected: true,
+              printerModel: 'Bambu Lab P1S',
+            },
+          ],
+        },
+      },
+    ];
+    const fixes = fixesFor(findings);
+    expect(fixes.candidates).toHaveLength(1);
+    expect(hasFix(fixes)).toBe(true);
+    expect(fixes.candidates?.[0]?.printerModel).toBe('Bambu Lab P1S');
   });
 });
 

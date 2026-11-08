@@ -112,7 +112,11 @@ export function DetailPanel({
 
       {fixes.candidates && (
         <fieldset className="candidates">
-          <legend>Choose the new parent preset</legend>
+          <legend>
+            {preset.status === 'unsupported'
+              ? 'Retarget to an added printer'
+              : 'Choose the new parent preset'}
+          </legend>
           {fixes.candidates.map((c) => (
             <label
               key={c.name}
