@@ -230,13 +230,21 @@ export function FindingsTable(props: Props) {
                         <span className="fix-hint fix-available">
                           {p.status === 'unsupported' &&
                           fixes.candidates &&
-                          fixes.candidates.length > 0
-                            ? `Retarget available (${fixes.candidates[0]?.printerModel ?? 'installed printer'}${
-                                fixes.candidates.length > 1
-                                  ? `, ${fixes.candidates.length} options`
-                                  : ''
-                              })`
-                            : 'Repair available'}
+                          fixes.candidates.length > 0 ? (
+                            <>
+                              Retarget available (
+                              {fixes.candidates[0]?.printerModel ?? 'installed printer'}
+                              {fixes.candidates.length > 1
+                                ? `, ${fixes.candidates.length} options`
+                                : ''}
+                              {fixes.candidates.length > 1 && (
+                                <span className="fix-options-hint"> · click row to choose</span>
+                              )}
+                              )
+                            </>
+                          ) : (
+                            'Repair available'
+                          )}
                         </span>
                       )}
                     </td>
