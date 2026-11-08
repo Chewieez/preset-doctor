@@ -232,15 +232,13 @@ export function FindingsTable(props: Props) {
                           fixes.candidates &&
                           fixes.candidates.length > 0 ? (
                             <>
-                              Retarget available (
+                              Retarget available:{' '}
                               {fixes.candidates[0]?.printerModel ?? 'installed printer'}
-                              {fixes.candidates.length > 1
-                                ? `, ${fixes.candidates.length} options`
-                                : ''}
                               {fixes.candidates.length > 1 && (
-                                <span className="fix-options-hint"> · click row to choose</span>
+                                <span className="fix-options-hint">
+                                  {` (${fixes.candidates.length} options · click to choose)`}
+                                </span>
                               )}
-                              )
                             </>
                           ) : (
                             'Repair available'

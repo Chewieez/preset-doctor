@@ -745,7 +745,7 @@ select {
   word-break: break-word;
 }
 
-.col-reason span {
+.col-reason > span {
   display: block;
 }
 
@@ -762,6 +762,7 @@ select {
 }
 
 .fix-options-hint {
+  display: inline;
   color: var(--muted);
   font-size: 12px;
   font-weight: normal;
