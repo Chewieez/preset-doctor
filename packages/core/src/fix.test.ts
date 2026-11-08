@@ -431,7 +431,9 @@ describe('planFixes', () => {
     const jsonChange = changes.find((c) => c.path === presetPath);
     expect(jsonChange).toBeDefined();
     expect(jsonChange?.after).toContain('"inherits": "Bambu PLA Basic @BBL P1S 0.4 nozzle"');
-    expect(jsonChange?.description).toContain('Set its parent to "Bambu PLA Basic @BBL P1S 0.4 nozzle"');
+    expect(jsonChange?.description).toContain(
+      'Set its parent to "Bambu PLA Basic @BBL P1S 0.4 nozzle"',
+    );
 
     const infoChange = changes.find((c) => c.path === infoPath);
     expect(infoChange).toBeDefined();

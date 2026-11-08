@@ -87,7 +87,7 @@ export function DetailPanel({
               <li key={i}>{l}</li>
             ))}
           </ul>
-          {preset.status === 'unsupported' && (
+          {preset.status === 'unsupported' && !fixes.candidates && (
             <p className="muted">
               Preset Doctor doesn't change which printers this preset is for. The explanation above
               says what to do in {slicer}.

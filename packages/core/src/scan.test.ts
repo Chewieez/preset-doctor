@@ -9,7 +9,12 @@ import { R4_ID } from './rules/r4.js';
 import { CLOUD_SYNC_EXPLANATION, R5_ID, scan, ScanError } from './scan.js';
 import { loadSystemIndexes } from './systemIndex.js';
 import { fixtureRoot, type FixtureName } from './testing/fixtures.js';
-import { fakeStudio, sidecar, type FakeSystemPreset, type FakeUserPreset } from './testing/studio.js';
+import {
+  fakeStudio,
+  sidecar,
+  type FakeSystemPreset,
+  type FakeUserPreset,
+} from './testing/studio.js';
 import type { Finding, PresetType, ScanResult } from './types.js';
 
 const fixture = (name: FixtureName) => nodeFs(fixtureRoot(name), { readOnly: true });

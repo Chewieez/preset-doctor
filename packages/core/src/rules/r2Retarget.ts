@@ -76,14 +76,9 @@ export async function findRetargetCandidates(
 
       const body = typeof system.load === 'function' ? await system.load(candName) : undefined;
       const entry = system.get(candName) as
-        | (SystemEntry & { setting_id?: string; settingId?: string })
-        | undefined;
+        (SystemEntry & { setting_id?: string; settingId?: string }) | undefined;
       const settingId = body?.settingId ?? entry?.setting_id ?? entry?.settingId;
-      const suggested = suggestRetargetName(
-        preset.fileStem,
-        parentCode,
-        enabledPrinter.model,
-      );
+      const suggested = suggestRetargetName(preset.fileStem, parentCode, enabledPrinter.model);
 
       const candidate: Candidate = {
         name: candName,

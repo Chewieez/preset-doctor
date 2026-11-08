@@ -37,6 +37,7 @@ This is unhelpful if the user does not own an X1. Adding the X1 in Bambu Studio 
 4. **Name Cleaning (Optional Checkbox):**
    - Default: Leave the preset's display name and file name unchanged (updates `inherits` only).
    - If checked: If the preset name contains the old printer tag (e.g., `@BBL X1C` or `@X1C`), replace it with the new printer tag (e.g., `@BBL P1S`), updating `name`, `filament_settings_id`, and renaming the file.
+   - Note: File renaming is deferred in favor of in-place preset updates to preserve cloud sync stability and prevent broken external references.
 5. **Safety & Diffs:** Use Preset Doctor's existing atomic write pipeline, byte-for-byte readback verification, and automated pre-write zip backup.
 
 ---
