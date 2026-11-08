@@ -132,5 +132,68 @@ describe('findRetargetCandidates', () => {
     expect(candidates[0]?.preselected).toBe(true);
     expect(candidates[0]?.suggestedName).toBe('Bambu PLA Basic @BBL P1S - 60C bed temp');
   });
+
+  it('resolves settingId from system.load when available', async () => {
+    const mockSystem: Partial<SystemIndex> = {
+      namesWithStem: () => ['Bambu PLA Basic @BBL P1S 0.4 nozzle'],
+      parsed: () => ({
+        stem: 'Bambu PLA Basic',
+        vendorTag: 'BBL',
+        printerCode: 'P1S',
+        nozzle: '0.4',
+      }),
+      effectiveCompatiblePrinters: async () => ['Bambu Lab P1S 0.4 nozzle'],
+      get: (name: string) => ({
+        name,
+        subPath: 'filament/p.json',
+        path: 'system/BBL/filament/p.json',
+        vendor: 'BBL',
+      }),
+      load: async (name: string) => ({
+        name,
+        subPath: 'filament/p.json',
+        path: 'system/BBL/filament/p.json',
+        vendor: 'BBL',
+        studioName: name,
+        inherits: '',
+        instantiation: true,
+        settingId: 'PFUS_LOAD_01',
+      }),
+    };
+
+    const preset: UserPreset = {
+      type: 'filament',
+      accountId: '12345678',
+      path: 'user/12345678/filament/Bambu PLA Basic @BBL X1C - 60C bed temp.json',
+      fileStem: 'Bambu PLA Basic @BBL X1C - 60C bed temp',
+      isBase: false,
+      raw: '{}',
+      infoPath: 'user/12345678/filament/Bambu PLA Basic @BBL X1C - 60C bed temp.info',
+    };
+
+    const inputs: CompatInputs = {
+      enabled: [
+        {
+          name: 'Bambu Lab P1S 0.4 nozzle',
+          model: 'Bambu Lab P1S',
+          nozzle: '0.4',
+          vendor: 'BBL',
+          isUser: false,
+        },
+      ],
+      enabledModels: [{ vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] }],
+      knownPrinters: new Map(),
+      vendorCheck: true,
+    };
+
+    const candidates = await findRetargetCandidates(
+      preset,
+      'Bambu PLA Basic @BBL X1C',
+      mockSystem as SystemIndex,
+      inputs,
+    );
+
+    expect(candidates[0]?.settingId).toBe('PFUS_LOAD_01');
+  });
 });
 

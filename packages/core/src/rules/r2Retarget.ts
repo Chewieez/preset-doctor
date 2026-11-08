@@ -74,10 +74,11 @@ export async function findRetargetCandidates(
       const candNozzle = parsedCand?.nozzle ?? '0.4';
       const confidence: Confidence = candNozzle === parentNozzle ? 'high' : 'medium';
 
+      const body = typeof system.load === 'function' ? await system.load(candName) : undefined;
       const entry = system.get(candName) as
         | (SystemEntry & { setting_id?: string; settingId?: string })
         | undefined;
-      const settingId = entry?.setting_id ?? entry?.settingId;
+      const settingId = body?.settingId ?? entry?.setting_id ?? entry?.settingId;
       const suggested = suggestRetargetName(
         preset.fileStem,
         parentCode,
