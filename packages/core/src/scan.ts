@@ -20,6 +20,7 @@ import type { RuleContext } from './rules/context.js';
 import { orcaParentLookup } from './orcaLookup.js';
 import { checkR1, displayName, R1_ID, userCandidateNames } from './rules/r1.js';
 import { rewordFinding, TEMPLATE_PARENT_TITLE } from './rules/r1Common.js';
+import { findRetargetCandidates } from './rules/r2Retarget.js';
 import {
   compatFinding,
   compatReason,
@@ -323,6 +324,12 @@ async function compatPass(args: {
     const eff = await effectiveCompat(preset, system, resolve);
     if (!eff) continue;
     const detail = judgeCompat(eff, preset.type, inputs);
+    if (detail.state === 'printer-not-added' && detail.source.kind === 'inherited' && system) {
+      const retarget = await findRetargetCandidates(preset, detail.source.from, system, inputs);
+      if (retarget.length > 0) {
+        detail.retargetCandidates = retarget;
+      }
+    }
     details.set(preset, detail);
     // Without a known selected printer, "made for another printer" says nothing.
     if (

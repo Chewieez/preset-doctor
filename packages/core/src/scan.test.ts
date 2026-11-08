@@ -4,12 +4,13 @@ import { parsePresetName } from './names.js';
 import { defaultPaths } from './node/studioProcess.js';
 import { nodeFs } from './node/nodeFs.js';
 import { R1_ID } from './rules/r1.js';
+import { R2_ID } from './rules/r2r3.js';
 import { R4_ID } from './rules/r4.js';
 import { CLOUD_SYNC_EXPLANATION, R5_ID, scan, ScanError } from './scan.js';
 import { loadSystemIndexes } from './systemIndex.js';
 import { fixtureRoot, type FixtureName } from './testing/fixtures.js';
-import { fakeStudio, sidecar } from './testing/studio.js';
-import type { Finding, ScanResult } from './types.js';
+import { fakeStudio, sidecar, type FakeSystemPreset, type FakeUserPreset } from './testing/studio.js';
+import type { Finding, PresetType, ScanResult } from './types.js';
 
 const fixture = (name: FixtureName) => nodeFs(fixtureRoot(name), { readOnly: true });
 const file = (path: string) => path.slice(path.lastIndexOf('/') + 1);
@@ -431,7 +432,91 @@ describe('scan on the process and printer fixture', () => {
     expect(f).toMatchObject({ status: 'hidden', presetType: 'filament' });
     expect(f?.explanation).toContain('is an internal template');
   });
+
+  it('attaches setInherits fix when unsupported preset matches an installed printer', async () => {
+    // A simulated scan where user has P1S enabled and a preset inheriting from X1C
+    const r = await scan(
+      fsWithConfig({
+        models: [{ vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] }],
+        userPresets: [
+          {
+            type: 'filament',
+            path: 'user/1000000001/filament/My PLA @BBL X1C.json',
+            inherits: 'Bambu PLA Basic @BBL X1C',
+          },
+        ],
+      }),
+    );
+    const finding = r.findings.find(
+      (f) => f.presetPath === 'user/1000000001/filament/My PLA @BBL X1C.json' && f.ruleId === R2_ID,
+    );
+    expect(finding).toBeDefined();
+    expect(finding?.proposedFix).toBeDefined();
+    expect(finding?.proposedFix?.kind).toBe('setInherits');
+  });
 });
+
+function fsWithConfig(options: {
+  models: Array<{ vendor: string; model: string; nozzles: string[] }>;
+  userPresets: Array<{
+    type?: PresetType;
+    path: string;
+    inherits?: string;
+  }>;
+  systemPresets?: FakeSystemPreset[];
+}) {
+  const confText = JSON.stringify({
+    app: { sync_user_preset: false },
+    models: options.models.map((m) => ({
+      vendor: m.vendor,
+      model: m.model,
+      nozzle_diameter: m.nozzles.join(';'),
+    })),
+  });
+
+  const defaultSystem: FakeSystemPreset[] = [
+    {
+      type: 'machine',
+      name: 'Bambu Lab P1S 0.4 nozzle',
+      extra: { printer_model: 'Bambu Lab P1S', printer_variant: '0.4' },
+    },
+    {
+      type: 'machine',
+      name: 'Bambu Lab X1 Carbon 0.4 nozzle',
+      extra: { printer_model: 'Bambu Lab X1 Carbon', printer_variant: '0.4' },
+    },
+    {
+      type: 'filament',
+      name: 'Bambu PLA Basic @BBL X1C',
+      compatible_printers: ['Bambu Lab X1 Carbon 0.4 nozzle'],
+    },
+    {
+      type: 'filament',
+      name: 'Bambu PLA Basic @BBL P1S 0.4 nozzle',
+      compatible_printers: ['Bambu Lab P1S 0.4 nozzle'],
+      setting_id: 'PFUS_P1S_04',
+    },
+  ];
+
+  const userPresets: FakeUserPreset[] = options.userPresets.map((u) => {
+    const match = /user\/[^/]+\/[^/]+\/(.+)\.json$/.exec(u.path);
+    const file = match ? match[1] : undefined;
+    return {
+      type: u.type ?? 'filament',
+      name: file,
+      file,
+      inherits: u.inherits,
+    };
+  });
+
+  const accountMatch = /user\/([^/]+)\//.exec(options.userPresets[0]?.path ?? '');
+  const account = accountMatch ? accountMatch[1] : '1000000001';
+
+  return fakeStudio(options.systemPresets ?? defaultSystem, userPresets, {
+    account,
+    conf: confText,
+  });
+}
 
 // Read-only check against the real install: npm run test:live -- scan
 describe.runIf(process.env['PRESET_DOCTOR_LIVE'] === '1')('live scan (read-only)', () => {
