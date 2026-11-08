@@ -207,8 +207,20 @@ export function FindingsTable(props: Props) {
                       <span>{p.reason}</span>
                       {checked && choice?.candidateName && (
                         <span className="fix-hint">
-                          {p.status === 'unsupported' ? 'Retarget: ' : 'Fix: use '}“
-                          {choice.candidateName}”
+                          {p.status === 'unsupported' ? (
+                            <>
+                              Retarget: “{choice.candidateName}”
+                              {fixes.candidates && fixes.candidates.length > 1 && (
+                                <span className="fix-options-hint">
+                                  {' '}
+                                  (+{fixes.candidates.length - 1} other option
+                                  {fixes.candidates.length > 2 ? 's' : ''} · click row to change)
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            `Fix: use “${choice.candidateName}”`
+                          )}
                         </span>
                       )}
                       {checked && choice?.rename && fixes.rename && (
@@ -218,8 +230,12 @@ export function FindingsTable(props: Props) {
                         <span className="fix-hint fix-available">
                           {p.status === 'unsupported' &&
                           fixes.candidates &&
-                          fixes.candidates[0]?.printerModel
-                            ? `Retarget available (${fixes.candidates[0].printerModel})`
+                          fixes.candidates.length > 0
+                            ? `Retarget available (${fixes.candidates[0]?.printerModel ?? 'installed printer'}${
+                                fixes.candidates.length > 1
+                                  ? `, ${fixes.candidates.length} options`
+                                  : ''
+                              })`
                             : 'Repair available'}
                         </span>
                       )}
