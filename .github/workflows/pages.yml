@@ -1,6 +1,6 @@
 name: Pages
 
-# Builds the web version (apps/web) and publishes it to https://shmehltr.github.io/preset-doctor/,
+# Builds the web version (apps/web) and publishes it to https://smehl86.github.io/preset-doctor/,
 # only after CI (lint, typecheck, every test) passed for a push to main, or when run by hand.
 on:
   workflow_run:

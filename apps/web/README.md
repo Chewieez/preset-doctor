@@ -1,6 +1,6 @@
 # Preset Doctor web version
 
-A static Vite + React site, published to <https://shmehltr.github.io/preset-doctor/> by
+A static Vite + React site, published to <https://smehl86.github.io/preset-doctor/> by
 [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml). It shows the same screen as the
 desktop app (`packages/ui`) and runs core in the page.
 

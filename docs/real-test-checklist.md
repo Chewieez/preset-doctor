@@ -195,7 +195,7 @@ save them, then close OrcaSlicer. **Make a copy of `%APPDATA%\OrcaSlicer\user` f
      never **Hidden**.
 ## 7. More nozzle sizes (about 10 minutes)
 
-This checks "Offer presets on more nozzle sizes" (CHANGELOG, Unreleased). It needs a filament
+This checks "Offer presets on more nozzle sizes" (CHANGELOG, 0.2.0). It needs a filament
 preset you made on one nozzle size, for example one based on `Generic PETG @BBL X2D 0.4 nozzle`.
 
 1. Close Studio. Scan with Preset Doctor, click **Choose presets…** in the note "Some presets are

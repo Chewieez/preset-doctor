@@ -68,7 +68,7 @@ Linux aren't supported yet.
 ## Download
 
 Get the `.exe` file from
-**[GitHub Releases](https://github.com/shmehltr/preset-doctor/releases)**. It is a portable app,
+**[GitHub Releases](https://github.com/smehl86/preset-doctor/releases)**. It is a portable app,
 so there is nothing to install: download it and double-click it. The same exe works for Bambu
 Studio and OrcaSlicer.
 
@@ -76,12 +76,12 @@ Studio and OrcaSlicer.
 certificate, and Preset Doctor doesn't have one. Click **More info**, then **Run anyway**. If you
 would rather check it first, the source code is all in this repo and the exe is built from it by
 [GitHub Actions](.github/workflows/release.yml). To check that the exe was built here:
-`gh attestation verify PresetDoctor-<version>-portable.exe -R shmehltr/preset-doctor`, or compare
+`gh attestation verify PresetDoctor-<version>-portable.exe -R smehl86/preset-doctor`, or compare
 its hash with `SHA256SUMS.txt` on the release page.
 
 ## Web version (no download)
 
-**[shmehltr.github.io/preset-doctor](https://shmehltr.github.io/preset-doctor/)** runs the same
+**[smehl86.github.io/preset-doctor](https://smehl86.github.io/preset-doctor/)** runs the same
 app in Chrome or Edge on your computer. Nothing is uploaded: once loaded, the page can't connect
 anywhere (its security policy sets `connect-src 'none'`), so your files are only read and changed
 on your computer.
@@ -162,7 +162,7 @@ The same engine also runs from a terminal, which is handy for checking before yo
 scripting. You need [Node.js 24](https://nodejs.org/) and a clone of this repo:
 
 ```sh
-git clone https://github.com/shmehltr/preset-doctor.git
+git clone https://github.com/smehl86/preset-doctor.git
 cd preset-doctor
 npm ci
 npm run build -w @preset-doctor/core

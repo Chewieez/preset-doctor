@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-11-07)
 
 The in-Studio test ([docs/real-test-checklist.md](docs/real-test-checklist.md), sections 0–3)
 passed on Bambu Studio 02.09.01.70: all 18 hidden presets came back, and stayed after turning

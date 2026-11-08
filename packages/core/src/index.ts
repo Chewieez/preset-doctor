@@ -1,5 +1,5 @@
 // Browser-safe public API. Node-only adapters are exported from './node/index.js'.
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 export * from './types.js';
 export * from './terms.js';

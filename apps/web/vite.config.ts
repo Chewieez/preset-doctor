@@ -43,7 +43,7 @@ function devCsp(): PluginOption {
 
 export default defineConfig({
   root: here,
-  // GitHub Pages serves the repo at https://shmehltr.github.io/preset-doctor/.
+  // GitHub Pages serves the repo at https://smehl86.github.io/preset-doctor/.
   base: '/preset-doctor/',
   resolve: {
     alias: [{ find: /^@preset-doctor\/core$/, replacement: coreIndex }],

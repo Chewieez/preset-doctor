@@ -5,7 +5,7 @@ import * as node from './node/index.js';
 
 describe('public API', () => {
   it('exports a version', () => {
-    expect(core.VERSION).toBe('0.1.0');
+    expect(core.VERSION).toBe('0.2.0');
   });
 
   it('keeps every workspace on the same version as VERSION', () => {

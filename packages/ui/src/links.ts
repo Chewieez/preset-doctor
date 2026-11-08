@@ -1,5 +1,5 @@
 /** Where the Windows app is downloaded. Opened by the user's click only; the app never fetches it. */
-export const RELEASES_URL = 'https://github.com/shmehltr/preset-doctor/releases';
+export const RELEASES_URL = 'https://github.com/smehl86/preset-doctor/releases';
 
 /** Bambu Studio's data folder, as typed into File Explorer's address bar. */
 export const STUDIO_FOLDER = '%APPDATA%\\BambuStudio';

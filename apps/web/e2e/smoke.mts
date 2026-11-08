@@ -170,7 +170,7 @@ try {
   assert.equal(await page.isDisabled('[data-testid=scan-button]'), true);
   assert.equal(
     await page.getAttribute('[data-testid=desktop-app-link]', 'href'),
-    'https://github.com/shmehltr/preset-doctor/releases',
+    'https://github.com/smehl86/preset-doctor/releases',
   );
   if (writeShots) {
     await page.screenshot({ path: join(shotsDir, 'web.png') });
