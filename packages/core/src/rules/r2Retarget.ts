@@ -58,48 +58,60 @@ export async function findRetargetCandidates(
   const candidates: Candidate[] = [];
   const seenNames = new Set<string>();
 
-  // Check against each enabled printer profile
-  for (const enabledPrinter of inputs.enabled) {
-    if (!enabledPrinter.model) continue;
+  // Check candidates against enabled printer profiles
+  for (const candName of candidateNames) {
+    if (seenNames.has(candName)) continue;
 
-    for (const candName of candidateNames) {
-      if (seenNames.has(candName)) continue;
-
-      const printers = await system.effectiveCompatiblePrinters(candName);
-      if (!printers || !printers.includes(enabledPrinter.name)) {
-        continue;
-      }
-
-      const parsedCand = system.parsed(candName);
-      const candNozzle = parsedCand?.nozzle ?? '0.4';
-      const confidence: Confidence = candNozzle === parentNozzle ? 'high' : 'medium';
-
-      const body = typeof system.load === 'function' ? await system.load(candName) : undefined;
-      const entry = system.get(candName) as
-        (SystemEntry & { setting_id?: string; settingId?: string }) | undefined;
-      const settingId = body?.settingId ?? entry?.setting_id ?? entry?.settingId;
-      const suggested = suggestRetargetName(preset.fileStem, parentCode, enabledPrinter.model);
-
-      const candidate: Candidate = {
-        name: candName,
-        confidence,
-        reason: `Switch parent to your added ${enabledPrinter.model} (${enabledPrinter.nozzle ?? '0.4'} mm nozzle)`,
-        source: 'system',
-        preselected: false,
-        printers,
-        printerModel: enabledPrinter.model,
-      };
-      if (settingId !== undefined) {
-        candidate.settingId = settingId;
-      }
-      if (suggested !== undefined) {
-        candidate.suggestedName = suggested;
-      }
-
-      candidates.push(candidate);
-
-      seenNames.add(candName);
+    const printers = await system.effectiveCompatiblePrinters(candName);
+    if (!printers || printers.length === 0) {
+      continue;
     }
+
+    const compatibleProfiles = inputs.enabled.filter((p) => p.model && printers.includes(p.name));
+    if (compatibleProfiles.length === 0) {
+      continue;
+    }
+
+    const parsedCand = system.parsed(candName);
+    const candNozzle = parsedCand?.nozzle ?? '0.4';
+
+    // Prefer exact nozzle match between candidate preset and enabled printer profile
+    const matchedProfile =
+      compatibleProfiles.find((p) => (p.nozzle ?? '0.4') === candNozzle) ??
+      compatibleProfiles.find((p) => (p.nozzle ?? '0.4') === parentNozzle) ??
+      compatibleProfiles[0]!;
+
+    const model = matchedProfile.model;
+    if (!model) {
+      continue;
+    }
+
+    const confidence: Confidence = candNozzle === parentNozzle ? 'high' : 'medium';
+
+    const body = typeof system.load === 'function' ? await system.load(candName) : undefined;
+    const entry = system.get(candName) as
+      (SystemEntry & { setting_id?: string; settingId?: string }) | undefined;
+    const settingId = body?.settingId ?? entry?.setting_id ?? entry?.settingId;
+    const suggested = suggestRetargetName(preset.fileStem, parentCode, model);
+
+    const candidate: Candidate = {
+      name: candName,
+      confidence,
+      reason: `Switch parent to your added ${model} (${matchedProfile.nozzle ?? '0.4'} mm nozzle)`,
+      source: 'system',
+      preselected: false,
+      printers,
+      printerModel: model,
+    };
+    if (settingId !== undefined) {
+      candidate.settingId = settingId;
+    }
+    if (suggested !== undefined) {
+      candidate.suggestedName = suggested;
+    }
+
+    candidates.push(candidate);
+    seenNames.add(candName);
   }
 
   // Pre-selection rule: if candidates are all for a single printer model, preselect the best one
@@ -112,6 +124,15 @@ export async function findRetargetCandidates(
       candidates[0].preselected = true;
     }
   }
+
+  // Sort candidates so preselected: true and confidence === 'high' rank ahead of medium
+  candidates.sort((a, b) => {
+    if (a.preselected !== b.preselected) {
+      return a.preselected ? -1 : 1;
+    }
+    const score = (c: Candidate) => (c.confidence === 'high' ? 2 : 1);
+    return score(b) - score(a);
+  });
 
   return candidates;
 }

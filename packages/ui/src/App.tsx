@@ -268,7 +268,10 @@ export function App() {
         const findings = byPath.get(path) ?? [];
         const fixes = fixesFor(findings);
         if (fixes.candidates && fixes.candidates.length > 0) {
-          const best = fixes.candidates.find((c) => c.confidence === 'high') ?? fixes.candidates[0];
+          const best =
+            fixes.candidates.find((c) => c.preselected) ??
+            fixes.candidates.find((c) => c.confidence === 'high') ??
+            fixes.candidates[0];
           if (best) {
             picks = { ...picks, [path]: best.name };
           }
@@ -597,6 +600,7 @@ export function App() {
                           const fixes = fixesFor(findings);
                           if (fixes.candidates && fixes.candidates.length > 0) {
                             const best =
+                              fixes.candidates.find((c) => c.preselected) ??
                               fixes.candidates.find((c) => c.confidence === 'high') ??
                               fixes.candidates[0];
                             if (best) {
