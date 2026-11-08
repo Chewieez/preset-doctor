@@ -9,7 +9,7 @@ labels: bug
 What you expected, and what you saw instead. Screenshots help.
 
 **Versions**
-- Preset Doctor version (shown at the bottom of the window, e.g. `v0.1.0`):
+- Preset Doctor version (shown at the bottom of the window, e.g. `v0.2.0`):
 - Windows app or web version:
 - Bambu Studio version (Help > About):
 - System preset version (next to the scan summary, e.g. `02.08.00.06`):

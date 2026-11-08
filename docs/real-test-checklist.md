@@ -17,7 +17,7 @@ The 18 presets have three things in common, and the predictions depend on them:
 - Preset Doctor writes only while Studio is closed, and so do you.
 - Never edit anything under `%APPDATA%\BambuStudio` by hand during the test, except when
   restoring a backup.
-- Use the 0.1.0 exe, or the CLI from this repo. On your folder both make exactly the same
+- Use the 0.2.0 exe, or the CLI from this repo. On your folder both make exactly the same
   suggestions (checked read-only on a copy of it).
 
 Write down each result as you go. The section at the bottom says what to send back.
