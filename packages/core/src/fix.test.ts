@@ -17,7 +17,7 @@ import { R1_ID } from './rules/r1.js';
 import { scan } from './scan.js';
 import { fixtureRoot } from './testing/fixtures.js';
 import { fakeStudio, sidecar, tempFixture } from './testing/studio.js';
-import type { Change } from './types.js';
+import { RULE_IDS, type Change, type ScanResult } from './types.js';
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -343,6 +343,99 @@ describe('planFixes', () => {
     const err = await planFixes(fs, r, defaultChoices(r)).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(FixError);
     expect((err as FixError).stale).toBe(true);
+  });
+
+  it('plans an R2 retarget fix by updating inherits to the chosen parent and updating base_id', async () => {
+    const presetPath = 'user/1000000001/filament/Bambu PLA Basic @BBL X1C - 60C bed temp.json';
+    const infoPath = 'user/1000000001/filament/Bambu PLA Basic @BBL X1C - 60C bed temp.info';
+    const fs = memFs({
+      [presetPath]: JSON.stringify(
+        {
+          name: 'Bambu PLA Basic @BBL X1C - 60C bed temp',
+          inherits: 'Bambu PLA Basic @BBL X1C',
+          from: 'user',
+        },
+        null,
+        2,
+      ),
+      [infoPath]: 'base_id = PFUS_OLD_X1C\nsetting_id = PFUS_USER_001\n',
+    });
+
+    const scanResult: ScanResult = {
+      root: '',
+      userId: '1000000001',
+      accounts: [],
+      presets: [
+        {
+          type: 'filament',
+          accountId: '1000000001',
+          path: presetPath,
+          fileStem: 'Bambu PLA Basic @BBL X1C - 60C bed temp',
+          name: 'Bambu PLA Basic @BBL X1C - 60C bed temp',
+          inherits: 'Bambu PLA Basic @BBL X1C',
+          isBase: false,
+          status: 'unsupported',
+          reason: "Only for printers you haven't added",
+          ruleIds: [RULE_IDS.printerNotAdded],
+        },
+      ],
+      findings: [
+        {
+          ruleId: RULE_IDS.printerNotAdded,
+          severity: 'info',
+          status: 'unsupported',
+          presetPath,
+          presetName: 'Bambu PLA Basic @BBL X1C - 60C bed temp',
+          presetType: 'filament',
+          title: "Only for printers you haven't added",
+          explanation: 'It is made for Bambu Lab X1 Carbon.',
+          proposedFix: {
+            kind: 'setInherits',
+            candidates: [
+              {
+                name: 'Bambu PLA Basic @BBL P1S 0.4 nozzle',
+                confidence: 'high',
+                reason: 'Switch parent to your added Bambu Lab P1S (0.4 mm)',
+                source: 'system',
+                settingId: 'PFUS_NEW_P1S',
+                preselected: true,
+                printerModel: 'Bambu Lab P1S',
+              },
+            ],
+          },
+        },
+      ],
+      warnings: [],
+      systemVersion: '02.08.00.06',
+      systemIndexRead: true,
+      slicer: 'bambu',
+      slicerVersion: null,
+      countsByType: { filament: 1, process: 0, machine: 0 },
+      indexesRead: { filament: true, process: true, machine: true },
+      compat: {
+        checked: true,
+        enabled: [{ vendor: 'BBL', model: 'Bambu Lab P1S', nozzles: ['0.4'] }],
+        userPrinters: 0,
+        unsupportedGroup: 'shown',
+      },
+    };
+
+    const changes = await planFixes(fs, scanResult, [
+      {
+        presetPath,
+        candidateName: 'Bambu PLA Basic @BBL P1S 0.4 nozzle',
+      },
+    ]);
+
+    expect(changes).toHaveLength(2);
+    const jsonChange = changes.find((c) => c.path === presetPath);
+    expect(jsonChange).toBeDefined();
+    expect(jsonChange?.after).toContain('"inherits": "Bambu PLA Basic @BBL P1S 0.4 nozzle"');
+    expect(jsonChange?.description).toContain('Set its parent to "Bambu PLA Basic @BBL P1S 0.4 nozzle"');
+
+    const infoChange = changes.find((c) => c.path === infoPath);
+    expect(infoChange).toBeDefined();
+    expect(infoChange?.after).toContain('base_id = PFUS_NEW_P1S');
   });
 });
 
